@@ -65,4 +65,25 @@ describe('importLegacy', () => {
     expect(tx[0]).toEqual({ title: 'зп', cat: 'зарплата' });
     expect(tx[2]).toEqual({ title: "mcdonald's", cat: 'фастфуд' });
   });
+  it('операция с отрицательной суммой переносится с обратным типом, баланс сходится', async () => {
+    const old = new PGlite();
+    await old.exec(`
+      CREATE SCHEMA tg_finance;
+      CREATE TABLE tg_finance.tg_users (tg_id bigint primary key, first_name text, last_name text, username text,
+        registered_at timestamp, balance numeric, expense_categories text[], income_categories text[], future text[]);
+      INSERT INTO tg_finance.tg_users VALUES (333, 'Минус', NULL, NULL, NULL, 1051, ARRAY['еда'], NULL, NULL);
+      CREATE TABLE tg_finance.transactions_333 (id bigint generated always as identity primary key,
+        created_at timestamp not null default now(), type text not null, title text not null, category text, amount numeric(12,2) not null);
+      INSERT INTO tg_finance.transactions_333 (created_at, type, title, category, amount) VALUES
+        ('2026-10-01 09:00', 'income', 'зп', 'зарплата', 1000),
+        ('2026-10-02 09:00', 'expense', 'возврат', 'еда', -51);
+    `);
+    const target = await freshTarget();
+    const [r] = await importLegacy(q(old), q(target));
+    expect(r).toMatchObject({ ok: true, importedCount: 2, newIncome: 1051, newExpense: 0, newBalance: 1051, legacyBalance: 1051 });
+    const [again] = await importLegacy(q(old), q(target));
+    expect(again).toMatchObject({ ok: true, importedCount: 2, newBalance: 1051 });
+    const tx = (await target.query<{ type: string; amount: string }>('SELECT type, amount FROM transactions ORDER BY legacy_id')).rows;
+    expect(tx[1]).toMatchObject({ type: 'income', amount: '51.00' });
+  });
 });

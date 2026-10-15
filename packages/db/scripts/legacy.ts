@@ -42,9 +42,14 @@ export async function importLegacy(legacy: Query, target: Query, opts: ImportOpt
   for (const u of users) {
     const tgId = Math.abs(n(u.tg_id));
     const table = `transactions_${tgId}`;
-    const txs = tables.has(table)
+    const rawTxs = tables.has(table)
       ? await legacy(`SELECT id, created_at::text AS created_at, type, title, category, amount FROM tg_finance."${table}" ORDER BY id`)
       : [];
+    // В старой базе встречаются отрицательные суммы (расход -51 на деле увеличивал баланс).
+    // Новая схема хранит только положительные суммы, поэтому такая операция переносится с противоположным типом.
+    const txs = rawTxs.map((t) =>
+      n(t.amount) < 0 ? { ...t, type: t.type === 'income' ? 'expense' : 'income', amount: -n(t.amount) } : t,
+    );
 
     const [nu] = await target(
       `INSERT INTO users (tg_id, username, first_name, last_name, created_at)
