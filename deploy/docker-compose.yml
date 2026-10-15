@@ -58,6 +58,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        umask 077
         while true; do
           f=/backups/mamoney-$$(date +%Y-%m-%d_%H%M).sql.gz
           if pg_dump -h db -U mamoney mamoney | gzip > "$$f.tmp"; then mv "$$f.tmp" "$$f"; echo "backup ok $$f"; else rm -f "$$f.tmp"; echo "backup FAILED"; fi
