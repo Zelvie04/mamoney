@@ -5,6 +5,7 @@ import { reportLog, users, type Db } from '@mamoney/db';
 import { listPlanned } from '@mamoney/domain';
 import { reportRows } from '@mamoney/domain';
 import { markBlocked } from '@mamoney/domain';
+import { esc } from './texts.ts';
 
 const DEFAULT_REPORT_HOUR = 9;
 
@@ -45,7 +46,7 @@ export async function runScheduledReports(db: Db, api: Api, now = new Date(), lo
       const planned = await listPlanned(db, u.id);
       if (planned.length) {
         const line = (p: (typeof planned)[number]) =>
-          `• ${p.title}${p.amount ? ` — ${formatMoney(p.amount, u.currency)}` : ''}${p.dueDate ? ` (${p.dueDate.split('-').reverse().slice(0, 2).join('.')})` : ''}`;
+          `• ${esc(p.title)}${p.amount ? ` — ${formatMoney(p.amount, u.currency)}` : ''}${p.dueDate ? ` (${p.dueDate.split('-').reverse().slice(0, 2).join('.')})` : ''}`;
         text += `\n\n<b>Будущие траты</b>\n${planned.map(line).join('\n')}`;
       }
       const kind = job === 'prev_week' ? 'week' : 'month';

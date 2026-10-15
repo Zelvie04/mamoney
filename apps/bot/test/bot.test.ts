@@ -241,3 +241,13 @@ describe('повторная доставка', () => {
     expect(t.sent().filter((m) => m.includes('Нашёл на фото'))).toHaveLength(1);
   });
 });
+
+describe('лимит распознавания', () => {
+  it('после дневного лимита голосовые не распознаются', async () => {
+    let n = 0;
+    const t = await testBot({ transcribe: async () => (n++, '10 чай') });
+    for (let i = 0; i < 31; i++) await t.voice();
+    expect(n).toBe(30);
+    expect(t.last()).toContain('лимит голосовых и фото исчерпан');
+  });
+});

@@ -6,7 +6,7 @@ export interface InitDataUser { id: number; first_name?: string; last_name?: str
  * Проверка Telegram.WebApp.initData (https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app).
  * Возвращает пользователя или null, если подпись неверна или данные устарели.
  */
-export function verifyInitData(initData: string, botToken: string, maxAgeSec = 7 * 24 * 3600, now = Date.now()): InitDataUser | null {
+export function verifyInitData(initData: string, botToken: string, maxAgeSec = 24 * 3600, now = Date.now()): InitDataUser | null {
   const params = new URLSearchParams(initData);
   const hash = params.get('hash');
   if (!hash) return null;

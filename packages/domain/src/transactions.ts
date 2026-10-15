@@ -123,7 +123,8 @@ export async function listTransactions(db: Db, userId: number, f: TxFilter = {})
 /** CSV для Excel (UTF-8 с BOM, разделитель «;»), от старых к новым. */
 export async function exportCsv(db: Db, userId: number): Promise<Buffer> {
   const rows = await recentTransactions(db, userId, 1_000_000);
-  const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  // Ячейки, начинающиеся с = + - @, Excel считает формулой: экранируем апострофом
+  const q = (s: string) => `"${(/^[=+\-@\t\r]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
   const csv = [
     'date;type;amount;currency;category;title',
     ...rows.reverse().map(({ tx, category }) =>

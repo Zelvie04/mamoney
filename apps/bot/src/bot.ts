@@ -38,7 +38,7 @@ import {
 } from '@mamoney/domain';
 import { adminStats, formatStats, isAdmin } from '@mamoney/domain';
 import { type User, defaultAccountId, ensureUser, exportCsv, getState, markBlocked, setCurrency, setState } from '@mamoney/domain';
-import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
+import { BOT_COMMANDS, BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION, COMMANDS, HELP, esc } from './texts.ts';
 import { itemsToLines, type ImageReader, type Transcriber } from './media.ts';
 
 export interface BotDeps {
@@ -55,6 +55,8 @@ export interface BotDeps {
   readImage?: ImageReader;
   /** Скачать файл из Telegram; по умолчанию через Bot API */
   downloadFile?: (fileId: string) => Promise<Buffer>;
+  /** Сколько голосовых и фото в сутки распознаём одному человеку (по умолчанию 30) */
+  mediaDailyLimit?: number;
   /** Для тестов: готовые данные бота, чтобы не ходить в getMe */
   botInfo?: UserFromGetMe;
 }
@@ -130,7 +132,7 @@ export function createBot(deps: BotDeps) {
   bot.command('start', async (ctx) => {
     const kb = appUrl ? new InlineKeyboard().webApp('Открыть приложение', appUrl) : undefined;
     await ctx.reply(
-      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\nВсё можно делать в приложении (кнопка ниже), а можно просто писать сюда.\n\n${HELP}`,
+      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\nПрисылай сюда текст, голосовое или фото чека — я всё запишу. Посмотреть, поправить и настроить всё можно в приложении (кнопка ниже).\n\n${HELP}`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
     if (!ctx.user.settings.currencyChosen) await askCurrency(ctx);
@@ -315,6 +317,18 @@ export function createBot(deps: BotDeps) {
   });
 
   const MAX_FILE = 20 * 1024 * 1024; // больше Bot API скачать не даёт
+  // Распознавание голоса и фото платное или с общим лимитом: не даём одному человеку израсходовать всё
+  const mediaLimit = deps.mediaDailyLimit ?? 30;
+  const mediaUse = new Map<number, { day: string; n: number }>();
+  const mediaAllowed = (userId: number) => {
+    const day = new Date().toISOString().slice(0, 10);
+    const u = mediaUse.get(userId);
+    const n = u?.day === day ? u.n : 0;
+    if (n >= mediaLimit) return false;
+    mediaUse.set(userId, { day, n: n + 1 });
+    return true;
+  };
+  const LIMIT_TEXT = 'На сегодня лимит голосовых и фото исчерпан. Напиши текстом, например: 350 кофе';
   const download =
     deps.downloadFile ??
     (async (fileId: string) => {
@@ -331,6 +345,7 @@ export function createBot(deps: BotDeps) {
     const media = m.voice ?? m.audio ?? m.video_note!;
     if ((media.duration ?? 0) > 300) return ctx.reply('Слишком длинное голосовое: до 5 минут.');
     if ((media.file_size ?? 0) > MAX_FILE) return ctx.reply('Файл слишком большой.');
+    if (!mediaAllowed(ctx.user.id)) return ctx.reply(LIMIT_TEXT);
     await ctx.replyWithChatAction('typing').catch(() => {});
     const mime = m.voice?.mime_type ?? m.audio?.mime_type ?? (m.video_note ? 'video/mp4' : 'audio/ogg');
     let text: string | null = null;
@@ -352,6 +367,7 @@ export function createBot(deps: BotDeps) {
     if (!deps.readImage) return ctx.reply('Фото пока не подключены. Напиши текстом, например: 350 кофе');
     const file = doc ?? m.photo!.at(-1)!;
     if ((file.file_size ?? 0) > MAX_FILE) return ctx.reply('Файл слишком большой.');
+    if (!mediaAllowed(ctx.user.id)) return ctx.reply(LIMIT_TEXT);
     await ctx.replyWithChatAction('typing').catch(() => {});
     let items: Awaited<ReturnType<ImageReader>> = null;
     try {
@@ -492,6 +508,8 @@ export function createBot(deps: BotDeps) {
 
 export async function setupBotProfile(bot: Bot<any>, appUrl: string | null) {
   await bot.api.setMyCommands(BOT_COMMANDS);
+  await bot.api.setMyDescription(BOT_DESCRIPTION);
+  await bot.api.setMyShortDescription(BOT_SHORT_DESCRIPTION);
   if (appUrl) {
     await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Приложение', web_app: { url: appUrl } } });
   }
