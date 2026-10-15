@@ -132,7 +132,9 @@ export function llmImageReader(opts: { baseUrl: string; apiKey: string; models: 
           body: JSON.stringify({
             model,
             temperature: 0,
-            max_tokens: 2000,
+            max_tokens: 4000,
+            // «рассуждающие» модели иначе тратят весь лимит на размышления и возвращают пустой ответ
+            reasoning: { effort: 'low' },
             messages: [
               {
                 role: 'user',

@@ -76,6 +76,16 @@ export function createBot(deps: BotDeps) {
   const appUrl = deps.publicUrl ? `${deps.publicUrl.replace(/\/$/, '')}/app/` : null;
 
   // Блокировка бота: только помечаем, данные не трогаем
+  // Telegram может прислать одно обновление повторно (например, если ответ на вебхук задержался) — второе пропускаем
+  const seen = new Set<number>();
+  bot.use(async (ctx, next) => {
+    const id = ctx.update.update_id;
+    if (seen.has(id)) return;
+    seen.add(id);
+    if (seen.size > 5000) seen.delete(seen.values().next().value!);
+    await next();
+  });
+
   bot.on('my_chat_member', async (ctx) => {
     const status = ctx.myChatMember.new_chat_member.status;
     if (ctx.chat.type === 'private' && status === 'kicked') await markBlocked(db, ctx.chat.id);

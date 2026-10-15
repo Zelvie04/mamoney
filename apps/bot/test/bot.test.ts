@@ -222,3 +222,22 @@ describe('голосовые и фото', () => {
     expect(plain(t.last())).not.toContain('999');
   });
 });
+
+describe('повторная доставка', () => {
+  it('то же обновление от Telegram обрабатывается один раз', async () => {
+    let calls = 0;
+    const t = await testBot({ readImage: async () => (calls++, [{ type: 'expense', amount: 92.84, title: 'жку', date: null }]) });
+    const update = {
+      update_id: 777,
+      message: {
+        message_id: 1, date: Math.floor(Date.now() / 1000),
+        chat: { id: 42, type: 'private', first_name: 'Тест' }, from: { id: 42, is_bot: false, first_name: 'Тест' },
+        photo: [{ file_id: 'p', file_unique_id: 'p', width: 10, height: 10 }],
+      },
+    } as any;
+    await t.bot.handleUpdate(update);
+    await t.bot.handleUpdate(update);
+    expect(calls).toBe(1);
+    expect(t.sent().filter((m) => m.includes('Нашёл на фото'))).toHaveLength(1);
+  });
+});

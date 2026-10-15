@@ -61,7 +61,12 @@ const app = await buildApi({
 
 const useWebhook = Boolean(base && config.webhookSecret);
 if (useWebhook) {
-  app.post(`/tg/${config.webhookSecret}`, webhookCallback(bot, 'fastify', { secretToken: config.webhookSecret }));
+  app.post(`/tg/${config.webhookSecret}`, webhookCallback(bot, 'fastify', {
+      secretToken: config.webhookSecret,
+      // Фото и голосовые обрабатываются дольше: отвечаем Telegram сразу, иначе он пришлёт то же сообщение ещё раз
+      onTimeout: 'return',
+      timeoutMilliseconds: 5000,
+    }));
 }
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
