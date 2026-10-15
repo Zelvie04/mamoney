@@ -10,6 +10,10 @@ describe('фото → строки записи', () => {
       { type: 'expense', amount: 80, title: 'покупка', date: null },
     ]);
     expect(parseImageItems('не знаю')).toBeNull();
+    expect(parseImageItems('Операции: [{"type":"expense","amount":"92.84 BYN","title":"коммуналка"}]')).toEqual([
+      { type: 'expense', amount: 92.84, title: 'коммуналка', date: null },
+    ]);
+    expect(parseImageItems('{"operations":[{"amount":10,"title":"чай"}]}')).toHaveLength(1);
   });
 
   it('строки разбираются обычным парсером: копейки не принимаются за дату', () => {

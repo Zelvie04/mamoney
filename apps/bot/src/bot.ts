@@ -352,7 +352,7 @@ export function createBot(deps: BotDeps) {
     } catch (e) {
       console.error('Фото', (e as Error).message);
     }
-    if (!items) return ctx.reply('Не получилось прочитать фото: модель сейчас недоступна. Попробуй позже или напиши текстом.');
+    if (!items) return ctx.reply('Не получилось прочитать фото: бесплатные модели сейчас перегружены. Попробуй через минуту или напиши текстом, например: 92,84 коммуналка');
     if (!items.length) return ctx.reply('Не нашёл на фото сумм. Можно написать текстом, например: 350 кофе');
     const lines = itemsToLines(items);
     await setState(db, ctx.user.id, 'photo', { lines });

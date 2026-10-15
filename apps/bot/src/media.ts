@@ -56,7 +56,7 @@ const PREFERRED_VISION = [
 ];
 
 /** «auto» — спросить каталог OpenRouter и взять бесплатные модели с вводом картинок. */
-export async function resolveVisionModels(baseUrl: string, configured: string[], max = 3): Promise<string[]> {
+export async function resolveVisionModels(baseUrl: string, configured: string[], max = 4): Promise<string[]> {
   if (!(configured.length === 1 && configured[0] === 'auto')) return configured;
   if (!baseUrl.startsWith(OPENROUTER_URL)) return [];
   try {
@@ -91,25 +91,30 @@ const IMAGE_PROMPT = (today: string, caption?: string) =>
     .filter(Boolean)
     .join('\n');
 
+/** Ответ модели → операции. Терпим обёртки вида ```json, пояснения вокруг и массив без {"items": …}. */
 export function parseImageItems(content: string): ImageItem[] | null {
-  const json = content.match(/\{[\s\S]*\}/)?.[0];
-  if (!json) return null;
-  try {
-    const raw = (JSON.parse(json) as { items?: unknown }).items;
-    if (!Array.isArray(raw)) return null;
-    return raw
+  const pick = (v: unknown): unknown => (Array.isArray(v) ? v : (v as any)?.items ?? (v as any)?.operations ?? null);
+  const candidates = [content.match(/\{[\s\S]*\}/)?.[0], content.match(/\[[\s\S]*\]/)?.[0]].filter(Boolean) as string[];
+  let raw: unknown = null;
+  for (const c of candidates) {
+    try {
+      raw = pick(JSON.parse(c));
+      if (Array.isArray(raw)) break;
+    } catch {
+      // следующий кандидат
+    }
+  }
+  if (!Array.isArray(raw)) return null;
+  return raw
       .map((x: any): ImageItem => ({
         type: x?.type === 'income' ? 'income' : 'expense',
-        amount: Math.round(Math.abs(Number(String(x?.amount ?? '').replace(/\s/g, '').replace(',', '.'))) * 100) / 100,
+        amount: Math.round(Math.abs(Number(String(x?.amount ?? '').replace(/[^\d.,]/g, '').replace(',', '.'))) * 100) / 100,
         title: String(x?.title ?? '').replace(/[\r\n]+/g, ' ').replace(/\d/g, '').trim().slice(0, 60),
         date: typeof x?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x.date) ? x.date : null,
       }))
       .filter((x) => Number.isFinite(x.amount) && x.amount > 0)
       .map((x) => ({ ...x, title: x.title || (x.type === 'income' ? 'поступление' : 'покупка') }))
       .slice(0, 20);
-  } catch {
-    return null;
-  }
 }
 
 /** Чтение фото через OpenAI-совместимый API с картинками (OpenRouter и т.п.). */
@@ -119,7 +124,7 @@ export function llmImageReader(opts: { baseUrl: string; apiKey: string; models: 
   const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
   return async (image, mime, { today, caption }) => {
     const dataUrl = `data:${mime || 'image/jpeg'};base64,${image.toString('base64')}`;
-    for (const model of models) {
+    const ask = async (model: string): Promise<ImageItem[] | 'busy' | null> => {
       try {
         const res = await fetch(url, {
           method: 'POST',
@@ -127,7 +132,7 @@ export function llmImageReader(opts: { baseUrl: string; apiKey: string; models: 
           body: JSON.stringify({
             model,
             temperature: 0,
-            max_tokens: 800,
+            max_tokens: 2000,
             messages: [
               {
                 role: 'user',
@@ -142,14 +147,35 @@ export function llmImageReader(opts: { baseUrl: string; apiKey: string; models: 
         });
         if (!res.ok) {
           console.error(`Фото, модель ${model}: ${res.status}`);
-          continue;
+          return res.status === 429 ? 'busy' : null;
         }
-        const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-        const items = parseImageItems(data.choices?.[0]?.message?.content ?? '');
-        if (items) return items;
+        const data = (await res.json()) as {
+          choices?: { finish_reason?: string; message?: { content?: unknown; reasoning?: string } }[];
+        };
+        const choice = data.choices?.[0];
+        const c = choice?.message?.content;
+        const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => p?.text ?? '').join('') : '';
+        const items = parseImageItems(text) ?? parseImageItems(choice?.message?.reasoning ?? '');
+        if (!items) {
+          console.error(`Фото, модель ${model}: ответ не разобран (${choice?.finish_reason ?? '?'}): ${text.slice(0, 200).replace(/\s+/g, ' ')}`);
+        }
+        return items;
       } catch (e) {
         console.error(`Фото, модель ${model}: ${(e as Error).message}`);
+        return null;
       }
+    };
+    // Бесплатный пул часто отвечает 429: такие модели пробуем ещё раз в конце, после паузы
+    const busy: string[] = [];
+    for (const model of models) {
+      const r = await ask(model);
+      if (r === 'busy') busy.push(model);
+      else if (r) return r;
+    }
+    for (const model of busy) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const r = await ask(model);
+      if (r && r !== 'busy') return r;
     }
     return null;
   };
