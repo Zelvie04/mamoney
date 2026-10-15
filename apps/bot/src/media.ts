@@ -47,6 +47,8 @@ export function deepgramTranscriber(opts: { apiKey: string; models?: string[]; l
 
 /** Бесплатные модели OpenRouter, которые принимают картинки. Берутся те, что сейчас есть в каталоге. */
 const PREFERRED_VISION = [
+  'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
   'google/gemma-3-27b-it:free',
   'qwen/qwen2.5-vl-72b-instruct:free',
   'mistralai/mistral-small-3.2-24b-instruct:free',
@@ -65,7 +67,9 @@ export async function resolveVisionModels(baseUrl: string, configured: string[],
       data.filter((m) => m.id.endsWith(':free') && m.architecture?.input_modalities?.includes('image')).map((m) => m.id),
     );
     const preferred = PREFERRED_VISION.filter((id) => vision.has(id));
-    return [...preferred, ...[...vision].filter((id) => !preferred.includes(id))].slice(0, max);
+    // модели-фильтры и «рассуждающие» для чтения чеков не подходят: первые не отвечают по делу, вторые слишком медленные
+    const rest = [...vision].filter((id) => !preferred.includes(id) && !/safety|guard|reasoning|thinking/i.test(id));
+    return [...preferred, ...rest].slice(0, max);
   } catch {
     return PREFERRED_VISION.slice(0, 2);
   }
