@@ -19,3 +19,12 @@ describe('matchRule', () => {
     expect(matchRule('кофе', rules)).toBeNull();
   });
 });
+
+import { matchBuiltin } from '../src/categorize.js';
+describe('matchBuiltin', () => {
+  it('словарь срабатывает только если у юзера есть категория', () => {
+    expect(matchBuiltin('300 такси до дома', [{ id: 1, name: 'Транспорт' }])?.id).toBe(1);
+    expect(matchBuiltin('300 такси', [{ id: 1, name: 'машина' }])).toBeNull();
+    expect(matchBuiltin('такситория', [{ id: 1, name: 'транспорт' }])).toBeNull();
+  });
+});

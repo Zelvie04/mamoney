@@ -1,0 +1,52 @@
+# Разворачивается на VPS рядом с n8n. HTTPS — через уже работающий Traefik из /opt/beget/n8n.
+# Перед первым запуском: cp ../.env.example .env и заполнить.
+name: mamoney
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mamoney
+      POSTGRES_DB: mamoney
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задай POSTGRES_PASSWORD в .env}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mamoney"]
+      interval: 5s
+      retries: 10
+    mem_limit: 256m
+    networks: [internal]
+
+  migrate:
+    build: ..
+    command: ["npx", "tsx", "packages/db/src/migrate.ts"]
+    env_file: .env
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [internal]
+
+  bot:
+    build: ..
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "3000"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    mem_limit: 256m
+    networks: [internal, traefik]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      - traefik.http.routers.mamoney-bot.rule=Host(`${APP_HOST}`) && (PathPrefix(`/tg/`) || Path(`/healthz`))
+      - traefik.http.routers.mamoney-bot.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.mamoney-bot.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.mamoney-bot.loadbalancer.server.port=3000
+
+networks:
+  internal: {}
+  traefik:
+    name: ${TRAEFIK_NETWORK}
+    external: true

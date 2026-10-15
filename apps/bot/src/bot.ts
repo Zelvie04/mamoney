@@ -1,0 +1,343 @@
+import { Bot, type Context, InlineKeyboard, InputFile } from 'grammy';
+import type { UserFromGetMe } from 'grammy/types';
+import {
+  type Period,
+  buildReport,
+  formatMoney,
+  formatReport,
+  parseMessage,
+  periodRange,
+  resolveOccurredAt,
+} from '@mamoney/core';
+import type { Db } from '@mamoney/db';
+import {
+  type AiCategorizer,
+  addCategory,
+  archiveCategory,
+  listCategories,
+  rememberRule,
+  resolveCategory,
+} from './services/categories.ts';
+import { addPlanned, clearPlanned, listPlanned } from './services/planned.ts';
+import {
+  addTransaction,
+  clearHistory,
+  deleteTransaction,
+  getBalance,
+  getTransaction,
+  recentTransactions,
+  reportRows,
+  setBalance,
+  totals,
+  updateTransaction,
+} from './services/transactions.ts';
+import { type User, defaultAccountId, ensureUser, getState, markBlocked, setState } from './services/users.ts';
+import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
+
+export interface BotDeps {
+  db: Db;
+  token: string;
+  ai?: AiCategorizer;
+  publicUrl?: string;
+  defaults: { timezone: string; currency: string };
+  /** Для тестов: готовые данные бота, чтобы не ходить в getMe */
+  botInfo?: UserFromGetMe;
+}
+
+type Ctx = Context & { user: User };
+
+const cancelKb = new InlineKeyboard().text('Отменить', 'cancel');
+const REPORT_TITLES: Record<Period, string> = {
+  week: 'С начала недели',
+  prev_week: 'Прошлая неделя',
+  month: 'С начала месяца',
+  prev_month: 'Прошлый месяц',
+};
+
+export function createBot(deps: BotDeps) {
+  const { db, ai, defaults } = deps;
+  const bot = new Bot<Ctx>(deps.token, deps.botInfo ? { botInfo: deps.botInfo } : undefined);
+  const money = (u: User, n: number) => formatMoney(n, u.currency);
+  const appUrl = deps.publicUrl ? `${deps.publicUrl.replace(/\/$/, '')}/app/` : null;
+
+  // Блокировка бота: только помечаем, данные не трогаем
+  bot.on('my_chat_member', async (ctx) => {
+    const status = ctx.myChatMember.new_chat_member.status;
+    if (ctx.chat.type === 'private' && status === 'kicked') await markBlocked(db, ctx.chat.id);
+  });
+
+  bot.use(async (ctx, next) => {
+    if (!ctx.from || ctx.from.is_bot) return;
+    if (ctx.chat && ctx.chat.type !== 'private') {
+      if (ctx.message?.text?.startsWith('/')) await ctx.reply('Я работаю только в личных сообщениях.');
+      return;
+    }
+    ctx.user = (await ensureUser(db, ctx.from, defaults)).user;
+    await next();
+  });
+
+  // Любая команда сбрасывает режим ввода (в n8n-версии команды записывались как «будущие расходы»)
+  bot.on('message:entities:bot_command', async (ctx, next) => {
+    await setState(db, ctx.user.id, 'idle');
+    await next();
+  });
+
+  const tidy = async (ctx: Ctx) => {
+    if (ctx.user.settings.cleanChat === false || !ctx.message) return;
+    await ctx.deleteMessage().catch(() => {});
+  };
+
+  bot.command('start', async (ctx) => {
+    const kb = appUrl ? new InlineKeyboard().webApp('Открыть приложение', appUrl) : undefined;
+    await ctx.reply(
+      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\n${HELP}`,
+      { parse_mode: 'HTML', reply_markup: kb },
+    );
+  });
+
+  bot.command(['commands', 'help'], (ctx) => ctx.reply(COMMANDS));
+  bot.command('creator', (ctx) => ctx.reply('Создатель: @Zelv04\nЕсть идеи или вопросы — пиши!'));
+  bot.command('app', async (ctx) => {
+    if (!appUrl) return ctx.reply('Приложение скоро появится.');
+    await ctx.reply('Открыть MaMoney:', { reply_markup: new InlineKeyboard().webApp('Открыть приложение', appUrl) });
+  });
+
+  const sendReport = async (ctx: Ctx, period: Period) => {
+    const { start, end } = periodRange(period, ctx.user.timezone);
+    const report = buildReport(await reportRows(db, ctx.user.id, start, end));
+    const detailed = period === 'week' || period === 'prev_week';
+    await ctx.reply(formatReport(REPORT_TITLES[period], report, { detailed, currency: ctx.user.currency }), { parse_mode: 'HTML' });
+    await tidy(ctx);
+  };
+  bot.command('weeknow', (ctx) => sendReport(ctx, 'week'));
+  bot.command('week', (ctx) => sendReport(ctx, 'prev_week'));
+  bot.command('monthnow', (ctx) => sendReport(ctx, 'month'));
+  bot.command('month', (ctx) => sendReport(ctx, 'prev_month'));
+
+  bot.command('total', async (ctx) => {
+    const t = await totals(db, ctx.user.id);
+    await ctx.reply(`За всё время\nДоход: ${money(ctx.user, t.income)}\nРасход: ${money(ctx.user, t.expense)}`);
+    await tidy(ctx);
+  });
+
+  bot.command('last', async (ctx) => {
+    const rows = await recentTransactions(db, ctx.user.id, 10);
+    if (!rows.length) return ctx.reply('Пока нет операций.');
+    const lines = rows.map(({ tx, category }) => {
+      const sign = tx.type === 'income' ? '+' : '−';
+      const d = tx.occurredAt.toLocaleDateString('ru-RU', { timeZone: ctx.user.timezone, day: '2-digit', month: '2-digit' });
+      return `${d} ${sign}${money(ctx.user, tx.amount)} · ${esc(tx.title)}${category ? ` <i>(${esc(category)})</i>` : ''}`;
+    });
+    await ctx.reply(`<b>Последние операции</b>\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+  });
+
+  bot.command('balance', async (ctx) => {
+    await setState(db, ctx.user.id, 'balance');
+    await ctx.reply(`Сейчас баланс: ${money(ctx.user, await getBalance(db, ctx.user.id))}\n\nЧтобы изменить, пришли новое значение числом.`, {
+      reply_markup: cancelKb,
+    });
+    await tidy(ctx);
+  });
+
+  const categoriesText = async (u: User) => {
+    const exp = await listCategories(db, u.id, 'expense');
+    const inc = await listCategories(db, u.id, 'income');
+    return `<b>Расходы:</b> ${esc(exp.map((c) => c.name).join(', ') || '—')}\n<b>Доходы:</b> ${esc(inc.map((c) => c.name).join(', ') || '—')}`;
+  };
+
+  bot.command('category', async (ctx) => {
+    await setState(db, ctx.user.id, 'category');
+    await ctx.reply(
+      `${await categoriesText(ctx.user)}\n\nДобавить или убрать: <code>1+кафе</code>, <code>1-кафе</code> (расходы), <code>2+подработка</code> (доходы).`,
+      { parse_mode: 'HTML', reply_markup: cancelKb },
+    );
+    await tidy(ctx);
+  });
+
+  bot.command('future', async (ctx) => {
+    await setState(db, ctx.user.id, 'planned');
+    await ctx.reply('Пиши планы и будущие траты в любом формате, по одному сообщению. Когда закончишь — /cancel или кнопка ниже.', {
+      reply_markup: cancelKb,
+    });
+    await tidy(ctx);
+  });
+
+  bot.command('show_future', async (ctx) => {
+    const list = await listPlanned(db, ctx.user.id);
+    await ctx.reply(list.length ? `Планы:\n${list.map((p) => `• ${p.title}`).join('\n')}` : 'Планов пока нет. Добавить — /future');
+    await tidy(ctx);
+  });
+
+  bot.command('delete_future', async (ctx) => {
+    await clearPlanned(db, ctx.user.id);
+    await ctx.reply('Планы очищены.');
+    await tidy(ctx);
+  });
+
+  bot.command('clear', async (ctx) => {
+    await ctx.reply('Удалить всю историю операций? Это нельзя отменить.', {
+      reply_markup: new InlineKeyboard().text('Да, удалить', 'clear:yes').text('Отменить', 'cancel'),
+    });
+    await tidy(ctx);
+  });
+
+  bot.command('cancel', async (ctx) => {
+    await ctx.reply('Отменено.');
+    await tidy(ctx);
+  });
+
+  bot.command('export', async (ctx) => {
+    const rows = await recentTransactions(db, ctx.user.id, 100_000);
+    const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+    const csv = [
+      'date;type;amount;currency;category;title',
+      ...rows.reverse().map(({ tx, category }) =>
+        [tx.occurredAt.toISOString(), tx.type, tx.amount.toFixed(2).replace('.', ','), tx.currency, q(category ?? ''), q(tx.title)].join(';'),
+      ),
+    ].join('\n');
+    await ctx.replyWithDocument(new InputFile(Buffer.from('﻿' + csv, 'utf8'), 'mamoney.csv'));
+  });
+
+  // ----- Кнопки -----
+  bot.callbackQuery('cancel', async (ctx) => {
+    await setState(db, ctx.user.id, 'idle');
+    await ctx.answerCallbackQuery('Отменено');
+    await ctx.deleteMessage().catch(() => {});
+  });
+
+  bot.callbackQuery('clear:yes', async (ctx) => {
+    await clearHistory(db, ctx.user.id);
+    await ctx.answerCallbackQuery('Удалено');
+    await ctx.editMessageText('История очищена. Начинаем с чистого листа.').catch(() => {});
+  });
+
+  bot.callbackQuery(/^undo:(\d+)$/, async (ctx) => {
+    const t = await deleteTransaction(db, ctx.user.id, Number(ctx.match[1]));
+    await ctx.answerCallbackQuery(t ? 'Запись удалена' : 'Уже удалена');
+    const bal = money(ctx.user, await getBalance(db, ctx.user.id));
+    await ctx.editMessageText(t ? `Удалено: ${esc(t.title)}, ${money(ctx.user, t.amount)}\nБаланс: ${bal}` : 'Запись уже удалена').catch(() => {});
+  });
+
+  bot.callbackQuery(/^cat:(\d+)$/, async (ctx) => {
+    const t = await getTransaction(db, ctx.user.id, Number(ctx.match[1]));
+    if (!t || t.type === 'transfer') return ctx.answerCallbackQuery('Запись не найдена');
+    const list = await listCategories(db, ctx.user.id, t.type);
+    const kb = new InlineKeyboard();
+    list.forEach((c, i) => {
+      kb.text(c.name, `setcat:${t.id}:${c.id}`);
+      if (i % 2 === 1) kb.row();
+    });
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({ reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^setcat:(\d+):(\d+)$/, async (ctx) => {
+    const [txId, catId] = [Number(ctx.match[1]), Number(ctx.match[2])];
+    const list = await listCategories(db, ctx.user.id);
+    const cat = list.find((c) => c.id === catId);
+    const t = cat && (await updateTransaction(db, ctx.user.id, txId, { categoryId: catId }));
+    if (!t || !cat) return ctx.answerCallbackQuery('Не получилось');
+    await rememberRule(db, ctx.user.id, t.title, catId);
+    await ctx.answerCallbackQuery(`Категория: ${cat.name}`);
+    await ctx.editMessageText(await recordText(ctx.user, t.type, t.amount, t.title, cat.name), {
+      parse_mode: 'HTML',
+      reply_markup: recordKb(t.id),
+    });
+  });
+
+  // ----- Текст -----
+  const recordKb = (id: number) => new InlineKeyboard().text('Отменить', `undo:${id}`).text('Категория', `cat:${id}`);
+  const recordText = async (u: User, type: string, amount: number, title: string, category: string) =>
+    `${type === 'income' ? '🟢 Доход' : '🔴 Расход'}: ${money(u, amount)}\n${esc(title)} · <i>${esc(category)}</i>\n\nБаланс: ${money(u, await getBalance(db, u.id))}`;
+
+  bot.on('message:text', async (ctx) => {
+    const text = ctx.message.text.trim();
+    if (text.startsWith('/')) return ctx.reply('Не знаю такой команды. Список: /commands');
+    const { state } = await getState(db, ctx.user.id);
+
+    if (state === 'balance') {
+      const v = Number(text.replace(/[\s ]/g, '').replace(',', '.').replace(/[₽р]$/i, ''));
+      if (!Number.isFinite(v)) return ctx.reply('Пришли просто число, например 15000 или -200,50', { reply_markup: cancelKb });
+      await setBalance(db, ctx.user.id, await defaultAccountId(db, ctx.user.id), v);
+      await setState(db, ctx.user.id, 'idle');
+      await ctx.reply(`Баланс обновлён: ${money(ctx.user, await getBalance(db, ctx.user.id))}`);
+      return tidy(ctx);
+    }
+
+    if (state === 'category') {
+      const m = text.match(/^([12])\s*([+-])\s*(.+)$/s);
+      if (!m) return ctx.reply('Формат: 1+кафе или 2-подработка', { reply_markup: cancelKb });
+      const type = m[1] === '1' ? 'expense' : 'income';
+      const name = m[3]!.trim();
+      if (m[2] === '+') {
+        const r = await addCategory(db, ctx.user.id, type, name);
+        if (r === 'exists') return ctx.reply('Такая категория уже есть.', { reply_markup: cancelKb });
+      } else if (!(await archiveCategory(db, ctx.user.id, type, name))) {
+        return ctx.reply('Нет такой категории.', { reply_markup: cancelKb });
+      }
+      await setState(db, ctx.user.id, 'idle');
+      await ctx.reply(`Готово.\n\n${await categoriesText(ctx.user)}`, { parse_mode: 'HTML' });
+      return tidy(ctx);
+    }
+
+    if (state === 'planned') {
+      await addPlanned(db, ctx.user.id, text);
+      await ctx.reply(`Записано в планы: ${text}`, { reply_markup: cancelKb });
+      return tidy(ctx);
+    }
+
+    const results = parseMessage(text);
+    if (results.every((r) => !r.ok)) {
+      return ctx.reply('Не понял запись. Нужна сумма и название, например <code>350 кофе</code>.\nПодробнее: /start', {
+        parse_mode: 'HTML',
+      });
+    }
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    const accountId = await defaultAccountId(db, ctx.user.id);
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    for (const [i, r] of results.entries()) {
+      if (!r.ok) {
+        await ctx.reply(`Пропустил строку «${lines[i]}»: не нашёл ${r.error === 'no_amount' ? 'сумму' : 'название'}.`);
+        continue;
+      }
+      const { category } = await resolveCategory(
+        db,
+        ctx.user.id,
+        { type: r.tx.type, title: r.tx.title, text: lines[i] ?? text, hint: r.tx.categoryHint },
+        ai,
+      );
+      const t = await addTransaction(db, {
+        userId: ctx.user.id,
+        accountId,
+        categoryId: category.id,
+        type: r.tx.type,
+        amount: r.tx.amount,
+        currency: ctx.user.currency,
+        title: r.tx.title,
+        occurredAt: resolveOccurredAt(r.tx.date, r.tx.dayOffset, ctx.user.timezone),
+        source: 'bot',
+        rawText: lines[i] ?? text,
+      });
+      await ctx.reply(await recordText(ctx.user, t.type, t.amount, t.title, category.name), {
+        parse_mode: 'HTML',
+        reply_markup: recordKb(t.id),
+      });
+    }
+    await tidy(ctx);
+  });
+
+  bot.on('message', (ctx) => ctx.reply('Пока понимаю только текст. Например: 350 кофе'));
+
+  bot.catch((err) => {
+    console.error('Ошибка в обработчике', err.error);
+  });
+
+  return bot;
+}
+
+export async function setupBotProfile(bot: Bot<any>, appUrl: string | null) {
+  await bot.api.setMyCommands(BOT_COMMANDS);
+  if (appUrl) {
+    await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Приложение', web_app: { url: appUrl } } });
+  }
+}
