@@ -8,7 +8,8 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build -w @mamoney/miniapp"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -18,7 +18,7 @@ import {
   rememberRule,
   resolveCategory,
 } from '@mamoney/domain';
-import { addPlanned, clearPlanned, listPlanned } from '@mamoney/domain';
+import { addPlanned, budgetAlerts, clearPlanned, listPlanned } from '@mamoney/domain';
 import {
   addTransaction,
   clearHistory,
@@ -318,10 +318,16 @@ export function createBot(deps: BotDeps) {
         source: 'bot',
         rawText: lines[i] ?? text,
       });
-      await ctx.reply(await recordText(ctx.user, t.type, t.amount, t.title, category.name), {
-        parse_mode: 'HTML',
-        reply_markup: recordKb(t.id),
-      });
+      let msg = await recordText(ctx.user, t.type, t.amount, t.title, category.name);
+      if (t.type === 'expense') {
+        for (const b of await budgetAlerts(db, ctx.user.id, category.id, ctx.user.timezone)) {
+          const name = b.categoryId ? category.name : 'все расходы';
+          msg += b.ratio > 1
+            ? `\n⚠️ Бюджет «${esc(name)}» превышен: ${money(ctx.user, b.spent)} из ${money(ctx.user, b.amount)}`
+            : `\n❗ Бюджет «${esc(name)}»: потрачено ${Math.round(b.ratio * 100)}% (${money(ctx.user, b.spent)} из ${money(ctx.user, b.amount)})`;
+        }
+      }
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: recordKb(t.id) });
     }
     await tidy(ctx);
   });

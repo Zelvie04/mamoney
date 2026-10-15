@@ -77,6 +77,7 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
   if (opts.staticDir && existsSync(opts.staticDir)) {
     await app.register(fastifyStatic, { root: opts.staticDir, prefix: '/app/' });
     app.get('/app', (_req, reply) => reply.redirect('/app/'));
+    app.get('/', (_req, reply) => reply.redirect('/app/'));
   }
 
   await app.register(async (api) => {
@@ -167,7 +168,8 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
         })
         .parse(req.query);
       const before = q.cursor ? { occurredAt: new Date(Number(q.cursor.split(':')[0])), id: Number(q.cursor.split(':')[1]) } : undefined;
-      const rows = await listTransactions(db, req.user.id, { ...q, before });
+      const range = q.period ? periodRange(q.period, req.user.timezone) : null;
+      const rows = await listTransactions(db, req.user.id, { ...q, from: range?.start ?? q.from, to: range?.end ?? q.to, before });
       const lastRow = rows.at(-1);
       return {
         items: rows.map((r) => ({ ...r.tx, category: r.category?.id ? r.category : null })),

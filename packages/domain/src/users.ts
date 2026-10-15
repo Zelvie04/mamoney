@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { DEFAULT_EXPENSE_CATEGORIES, DEFAULT_INCOME_CATEGORIES } from '@mamoney/core';
+import { DEFAULT_EMOJI, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_INCOME_CATEGORIES } from '@mamoney/core';
 import { accounts, botState, categories, users, type Db } from '@mamoney/db';
 
 export interface TgUser { id: number; username?: string; first_name?: string; last_name?: string; language_code?: string }
@@ -43,8 +43,8 @@ export async function ensureUser(db: Db, tg: TgUser, defaults: UserDefaults): Pr
     }
     await tx.insert(accounts).values({ userId: u.id, name: 'Основной', currency: u.currency, isDefault: true });
     await tx.insert(categories).values([
-      ...DEFAULT_EXPENSE_CATEGORIES.map((name, sort) => ({ userId: u.id, type: 'expense' as const, name, sort })),
-      ...DEFAULT_INCOME_CATEGORIES.map((name, sort) => ({ userId: u.id, type: 'income' as const, name, sort })),
+      ...DEFAULT_EXPENSE_CATEGORIES.map((name, sort) => ({ userId: u.id, type: 'expense' as const, name, sort, emoji: DEFAULT_EMOJI[name] ?? null })),
+      ...DEFAULT_INCOME_CATEGORIES.map((name, sort) => ({ userId: u.id, type: 'income' as const, name, sort, emoji: DEFAULT_EMOJI[name] ?? null })),
     ]);
     return { user: u, created: true };
   });

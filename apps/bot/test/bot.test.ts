@@ -99,3 +99,20 @@ describe('бот', () => {
     expect(t.last()).toContain('Не понял запись');
   });
 });
+
+import { upsertBudget, listCategories } from '@mamoney/domain';
+describe('бюджеты в боте', () => {
+  it('предупреждает при 80% и при превышении', async () => {
+    const t = await testBot();
+    await t.text('/start');
+    const [u] = await t.db.execute<any>("SELECT id FROM users WHERE tg_id = 42" as any).then((r: any) => r.rows ?? r);
+    const cafe = (await listCategories(t.db, u.id, 'expense')).find((c) => c.name === 'кафе')!;
+    await upsertBudget(t.db, u.id, { categoryId: cafe.id, period: 'month', amount: 1000 });
+    await t.text('500 обед #кафе');
+    expect(t.last()).not.toContain('Бюджет');
+    await t.text('350 ужин #кафе');
+    expect(plain(t.last())).toContain('Бюджет «кафе»: потрачено 85%');
+    await t.text('300 кофе #кафе');
+    expect(plain(t.last())).toContain('превышен');
+  });
+});

@@ -55,6 +55,12 @@ describe('API', () => {
     expect(page2.body.items).toHaveLength(1);
     expect(page2.body.nextCursor).toBeNull();
 
+    await call('POST', '/api/transactions', { type: 'expense', amount: 5, title: 'старое', occurredAt: '2025-01-10T10:00:00Z' });
+    const month = await call('GET', '/api/transactions?period=month');
+    expect(month.body.items.map((t: any) => t.title)).not.toContain('старое');
+    expect((await call('GET', '/api/transactions?q=старое')).body.items).toHaveLength(1);
+    await call('DELETE', `/api/transactions/${(await call('GET', '/api/transactions?q=старое')).body.items[0].id}`);
+
     const search = await call('GET', '/api/transactions?q=такс');
     expect(search.body.items.map((t: any) => t.title)).toEqual(['такси']);
     expect(search.body.items[0].category.name).toBe('транспорт');

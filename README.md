@@ -6,8 +6,9 @@
 packages/core   парсер операций, категории, отчёты, периоды (без зависимостей)
 packages/db     схема Postgres (Drizzle), миграции, перенос из n8n-базы
 apps/bot        бот на grammY: команды, запись операций, категории, отчёты по расписанию
-apps/api        API для Mini App на Fastify (в работе)
-apps/miniapp    React + Vite (в работе)
+apps/api        API для Mini App на Fastify (вход по подписи Telegram initData)
+apps/miniapp    Mini App на React + Vite: главная, операции, аналитика, бюджеты, категории, планы, настройки
+packages/domain общая логика бота и API (пользователи, операции, категории, бюджеты, аналитика)
 ```
 
 ## Команды
@@ -45,3 +46,11 @@ docker compose up -d --build
 3. Встроенный словарь для стандартных категорий (такси → транспорт, зп → зарплата…).
 4. ИИ через OpenRouter.
 5. «другие расходы» / «другие доходы».
+
+## Mini App локально
+
+```bash
+npx tsx apps/api/scripts/preview.ts      # демо-данные в памяти, http://localhost:3999/app/
+npm run dev -w @mamoney/miniapp          # hot reload, /api проксируется на :3000
+```
+Вне Telegram приложению нужен `initData`: превью-скрипт печатает подписанный для демо-пользователя, его можно передать через `VITE_DEV_INIT_DATA`.
