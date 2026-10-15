@@ -1,4 +1,4 @@
-import type { AiCategorizer } from './services/categories.ts';
+import type { AiCategorizer } from '@mamoney/domain';
 
 /**
  * Категоризация через OpenRouter. Пробует модели по очереди; любой сбой → null,

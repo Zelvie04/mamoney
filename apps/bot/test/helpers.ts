@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { schema, type Db } from '@mamoney/db';
 import { createBot } from '../src/bot.ts';
-import type { AiCategorizer } from '../src/services/categories.ts';
+import type { AiCategorizer } from '@mamoney/domain';
 
 export async function testDb(): Promise<Db> {
   const pg = new PGlite();

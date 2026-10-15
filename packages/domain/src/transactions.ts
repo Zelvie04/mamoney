@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, lt, or, sql } from 'drizzle-orm';
 import { accounts, categories, transactions, type Db } from '@mamoney/db';
 import type { ReportRow } from '@mamoney/core';
 
@@ -83,4 +83,39 @@ export async function clearHistory(db: Db, userId: number) {
     await tx.delete(transactions).where(eq(transactions.userId, userId));
     await tx.update(accounts).set({ initialBalance: 0 }).where(eq(accounts.userId, userId));
   });
+}
+
+export interface TxFilter {
+  from?: Date;
+  to?: Date;
+  type?: 'income' | 'expense';
+  categoryId?: number;
+  q?: string;
+  limit?: number;
+  /** Курсор: occurred_at|id последней записи предыдущей страницы */
+  before?: { occurredAt: Date; id: number };
+}
+
+export async function listTransactions(db: Db, userId: number, f: TxFilter = {}) {
+  const conds = [eq(transactions.userId, userId)];
+  if (f.from) conds.push(gte(transactions.occurredAt, f.from));
+  if (f.to) conds.push(lt(transactions.occurredAt, f.to));
+  if (f.type) conds.push(eq(transactions.type, f.type));
+  if (f.categoryId) conds.push(eq(transactions.categoryId, f.categoryId));
+  if (f.q) conds.push(or(ilike(transactions.title, `%${f.q}%`), ilike(transactions.note, `%${f.q}%`))!);
+  if (f.before) {
+    conds.push(
+      or(
+        lt(transactions.occurredAt, f.before.occurredAt),
+        and(eq(transactions.occurredAt, f.before.occurredAt), lt(transactions.id, f.before.id)),
+      )!,
+    );
+  }
+  return db
+    .select({ tx: transactions, category: { id: categories.id, name: categories.name, emoji: categories.emoji, color: categories.color } })
+    .from(transactions)
+    .leftJoin(categories, eq(categories.id, transactions.categoryId))
+    .where(and(...conds))
+    .orderBy(desc(transactions.occurredAt), desc(transactions.id))
+    .limit(Math.min(f.limit ?? 50, 200));
 }

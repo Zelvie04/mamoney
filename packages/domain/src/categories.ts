@@ -103,3 +103,9 @@ export async function resolveCategory(
 
   return { category: await ensureFallback(db, userId, p.type), by: 'fallback' };
 }
+
+export async function updateCategory(db: Db, userId: number, id: number, set: { name?: string; emoji?: string | null; color?: string | null; sort?: number; archived?: boolean }) {
+  const v = { ...set, ...(set.name ? { name: normalize(set.name) } : {}) };
+  const [c] = await db.update(categories).set(v).where(and(eq(categories.id, id), eq(categories.userId, userId))).returning();
+  return c ?? null;
+}

@@ -11,6 +11,8 @@
   "dependencies": {
     "grammy": "^1.46.0",
     "@mamoney/core": "*",
-    "@mamoney/db": "*"
+    "@mamoney/db": "*",
+    "@mamoney/domain": "*",
+    "@mamoney/api": "*"
   }
 }

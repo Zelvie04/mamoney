@@ -17,8 +17,8 @@ import {
   listCategories,
   rememberRule,
   resolveCategory,
-} from './services/categories.ts';
-import { addPlanned, clearPlanned, listPlanned } from './services/planned.ts';
+} from '@mamoney/domain';
+import { addPlanned, clearPlanned, listPlanned } from '@mamoney/domain';
 import {
   addTransaction,
   clearHistory,
@@ -30,8 +30,8 @@ import {
   setBalance,
   totals,
   updateTransaction,
-} from './services/transactions.ts';
-import { type User, defaultAccountId, ensureUser, getState, markBlocked, setState } from './services/users.ts';
+} from '@mamoney/domain';
+import { type User, defaultAccountId, ensureUser, getState, markBlocked, setState } from '@mamoney/domain';
 import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
 
 export interface BotDeps {

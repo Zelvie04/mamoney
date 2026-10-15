@@ -1,5 +1,6 @@
-import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { webhookCallback } from 'grammy';
+import { buildApi } from '@mamoney/api';
 import { connect } from '@mamoney/db';
 import { openRouterCategorizer } from './ai.ts';
 import { createBot, setupBotProfile } from './bot.ts';
@@ -7,45 +8,51 @@ import { config } from './config.ts';
 import { startScheduler } from './cron.ts';
 
 const { db, client } = connect();
-const bot = createBot({
-  db,
-  token: config.botToken,
-  ai: openRouterCategorizer(config.openrouterKey, config.openrouterModels),
-  publicUrl: config.publicUrl,
-  defaults: { timezone: config.defaultTimezone, currency: config.defaultCurrency },
-});
+const ai = openRouterCategorizer(config.openrouterKey, config.openrouterModels);
+const defaults = { timezone: config.defaultTimezone, currency: config.defaultCurrency };
+const bot = createBot({ db, token: config.botToken, ai, publicUrl: config.publicUrl, defaults });
 
 await bot.init();
-const appUrl = config.publicUrl ? `${config.publicUrl.replace(/\/$/, '')}/app/` : null;
+const base = config.publicUrl.replace(/\/$/, '');
+const appUrl = base ? `${base}/app/` : null;
 await setupBotProfile(bot, appUrl).catch((e) => console.error('setMyCommands', e));
 startScheduler(db, bot.api, config.adminChatId);
 
-if (config.publicUrl && config.webhookSecret) {
-  // Прод: вебхук. Путь содержит секрет, Telegram дополнительно присылает secret_token в заголовке.
-  const path = `/tg/${config.webhookSecret}`;
-  const handle = webhookCallback(bot, 'http', { secretToken: config.webhookSecret });
-  const server = createServer((req, res) => {
-    if (req.url === '/healthz') return res.end('ok');
-    if (req.method === 'POST' && req.url === path) return void handle(req, res);
-    res.statusCode = 404;
-    res.end();
-  });
-  server.listen(config.port, async () => {
-    await bot.api.setWebhook(`${config.publicUrl.replace(/\/$/, '')}${path}`, {
-      secret_token: config.webhookSecret,
-      allowed_updates: ['message', 'callback_query', 'my_chat_member'],
-    });
-    console.log(`@${bot.botInfo.username}: вебхук на порту ${config.port}`);
-  });
-  const stop = () => server.close(() => client.end().then(() => process.exit(0)));
-  process.once('SIGTERM', stop);
-  process.once('SIGINT', stop);
-} else {
-  // Разработка: long polling, вебхук снимается
-  await bot.api.deleteWebhook();
-  console.log(`@${bot.botInfo.username}: polling`);
-  process.once('SIGINT', () => bot.stop());
-  process.once('SIGTERM', () => bot.stop());
-  await bot.start({ allowed_updates: ['message', 'callback_query', 'my_chat_member'] });
-  await client.end();
+// Один процесс: вебхук бота + API Mini App + статика Mini App
+const app = await buildApi({
+  db,
+  botToken: config.botToken,
+  defaults,
+  ai,
+  staticDir: process.env.MINIAPP_DIR ?? fileURLToPath(new URL('../../miniapp/dist', import.meta.url)),
+  logger: true,
+});
+
+const useWebhook = Boolean(base && config.webhookSecret);
+if (useWebhook) {
+  app.post(`/tg/${config.webhookSecret}`, webhookCallback(bot, 'fastify', { secretToken: config.webhookSecret }));
 }
+
+await app.listen({ port: config.port, host: '0.0.0.0' });
+
+if (useWebhook) {
+  await bot.api.setWebhook(`${base}/tg/${config.webhookSecret}`, {
+    secret_token: config.webhookSecret,
+    allowed_updates: ['message', 'callback_query', 'my_chat_member'],
+  });
+  console.log(`@${bot.botInfo.username}: вебхук, порт ${config.port}`);
+} else {
+  // Локальная разработка: long polling
+  await bot.api.deleteWebhook();
+  void bot.start({ allowed_updates: ['message', 'callback_query', 'my_chat_member'] });
+  console.log(`@${bot.botInfo.username}: polling, API на порту ${config.port}`);
+}
+
+const stop = async () => {
+  if (!useWebhook) await bot.stop();
+  await app.close();
+  await client.end();
+  process.exit(0);
+};
+process.once('SIGTERM', stop);
+process.once('SIGINT', stop);
