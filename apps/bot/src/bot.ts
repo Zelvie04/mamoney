@@ -39,6 +39,7 @@ import {
 import { adminStats, formatStats, isAdmin } from '@mamoney/domain';
 import { type User, defaultAccountId, ensureUser, exportCsv, getState, markBlocked, setCurrency, setState } from '@mamoney/domain';
 import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
+import { itemsToLines, type ImageReader, type Transcriber } from './media.ts';
 
 export interface BotDeps {
   db: Db;
@@ -48,6 +49,12 @@ export interface BotDeps {
   defaults: { timezone: string; currency: string };
   /** Кому доступна /stats */
   admin?: { ids: number[]; usernames: string[] };
+  /** Распознавание голосовых (Deepgram) */
+  transcribe?: Transcriber;
+  /** Чтение фото чеков и скриншотов (модель с картинками) */
+  readImage?: ImageReader;
+  /** Скачать файл из Telegram; по умолчанию через Bot API */
+  downloadFile?: (fileId: string) => Promise<Buffer>;
   /** Для тестов: готовые данные бота, чтобы не ходить в getMe */
   botInfo?: UserFromGetMe;
 }
@@ -90,10 +97,11 @@ export function createBot(deps: BotDeps) {
     await next();
   });
 
-  const tidy = async (ctx: Ctx) => {
+  const tidyMsg = async (ctx: Ctx) => {
     if (ctx.user.settings.cleanChat === false || !ctx.message) return;
     await ctx.deleteMessage().catch(() => {});
   };
+  const tidy = tidyMsg;
 
   const currencyKb = () => {
     const kb = new InlineKeyboard();
@@ -293,7 +301,82 @@ export function createBot(deps: BotDeps) {
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) return ctx.reply('Не знаю такой команды. Список: /commands');
+    return handleText(ctx, text);
+  });
+
+  const MAX_FILE = 20 * 1024 * 1024; // больше Bot API скачать не даёт
+  const download =
+    deps.downloadFile ??
+    (async (fileId: string) => {
+      const f = await bot.api.getFile(fileId);
+      const res = await fetch(`https://api.telegram.org/file/bot${deps.token}/${f.file_path}`, { signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new Error(`file ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    });
+
+  // Голосовые: распознаём и обрабатываем как обычный текст
+  bot.on(['message:voice', 'message:audio', 'message:video_note'], async (ctx) => {
+    if (!deps.transcribe) return ctx.reply('Голосовые пока не подключены. Напиши текстом, например: 350 кофе');
+    const m = ctx.message;
+    const media = m.voice ?? m.audio ?? m.video_note!;
+    if ((media.duration ?? 0) > 300) return ctx.reply('Слишком длинное голосовое: до 5 минут.');
+    if ((media.file_size ?? 0) > MAX_FILE) return ctx.reply('Файл слишком большой.');
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    const mime = m.voice?.mime_type ?? m.audio?.mime_type ?? (m.video_note ? 'video/mp4' : 'audio/ogg');
+    let text: string | null = null;
+    try {
+      text = await deps.transcribe(await download(media.file_id), mime);
+    } catch (e) {
+      console.error('Голосовое', (e as Error).message);
+    }
+    if (!text) return ctx.reply('Не получилось разобрать голосовое. Попробуй ещё раз или напиши текстом.');
+    await ctx.reply(`🎙 <i>${esc(text)}</i>`, { parse_mode: 'HTML' });
+    return handleText(ctx, text, { keepMessage: true });
+  });
+
+  // Фото чека или скриншота: показываем, что нашли, и записываем после подтверждения
+  bot.on(['message:photo', 'message:document'], async (ctx, next) => {
+    const m = ctx.message;
+    const doc = m.document;
+    if (doc && !doc.mime_type?.startsWith('image/')) return next();
+    if (!deps.readImage) return ctx.reply('Фото пока не подключены. Напиши текстом, например: 350 кофе');
+    const file = doc ?? m.photo!.at(-1)!;
+    if ((file.file_size ?? 0) > MAX_FILE) return ctx.reply('Файл слишком большой.');
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    let items: Awaited<ReturnType<ImageReader>> = null;
+    try {
+      items = await deps.readImage(await download(file.file_id), doc?.mime_type ?? 'image/jpeg', {
+        today: localDate(new Date(), ctx.user.timezone),
+        caption: m.caption?.trim() || undefined,
+      });
+    } catch (e) {
+      console.error('Фото', (e as Error).message);
+    }
+    if (!items) return ctx.reply('Не получилось прочитать фото: модель сейчас недоступна. Попробуй позже или напиши текстом.');
+    if (!items.length) return ctx.reply('Не нашёл на фото сумм. Можно написать текстом, например: 350 кофе');
+    const lines = itemsToLines(items);
+    await setState(db, ctx.user.id, 'photo', { lines });
+    await ctx.reply(
+      `📷 Нашёл на фото:\n<code>${esc(lines.join('\n'))}</code>\n\nЗаписать? Если что-то не так, пришли исправленный текст, и я запишу его.`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('Записать', 'photo:ok').text('Отмена', 'cancel') },
+    );
+  });
+
+  bot.callbackQuery('photo:ok', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const { state, payload } = await getState(db, ctx.user.id);
+    const lines = Array.isArray(payload.lines) ? (payload.lines as string[]) : [];
+    if (state !== 'photo' || !lines.length) return ctx.editMessageReplyMarkup().catch(() => {});
+    await setState(db, ctx.user.id, 'idle');
+    await ctx.editMessageReplyMarkup().catch(() => {});
+    return handleText(ctx, lines.join('\n'), { keepMessage: true });
+  });
+
+  /** Обработка текста: из сообщения, распознанного голосового или фото */
+  const handleText = async (ctx: Ctx, text: string, { keepMessage = false } = {}) => {
+    const tidy = (c: Ctx) => (keepMessage ? Promise.resolve() : tidyMsg(c));
     const { state } = await getState(db, ctx.user.id);
+    if (state === 'photo') await setState(db, ctx.user.id, 'idle'); // прислал исправленный текст вместо подтверждения
 
     if (state === 'currency') {
       const u = await setCurrency(db, ctx.user.id, text);
@@ -386,9 +469,9 @@ export function createBot(deps: BotDeps) {
       await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: recordKb(t.id) });
     }
     await tidy(ctx);
-  });
+  };
 
-  bot.on('message', (ctx) => ctx.reply('Пока понимаю только текст. Например: 350 кофе'));
+  bot.on('message', (ctx) => ctx.reply('Понимаю текст, голосовые и фото чеков. Например: 350 кофе'));
 
   bot.catch((err) => {
     console.error('Ошибка в обработчике', err.error);

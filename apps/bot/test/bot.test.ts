@@ -166,3 +166,59 @@ describe('будущие траты и статистика в боте', () => 
     expect(plain(t.last())).toMatch(/Пользователи: 1.*Операции: 1/s);
   });
 });
+
+describe('голосовые и фото', () => {
+  it('без ключей вежливо отказывает', async () => {
+    const t = await testBot();
+    await t.voice();
+    expect(t.last()).toContain('Голосовые пока не подключены');
+    await t.photo();
+    expect(t.last()).toContain('Фото пока не подключены');
+  });
+
+  it('голосовое распознаётся и записывается как текст', async () => {
+    const got: string[] = [];
+    const t = await testBot({ transcribe: async (audio) => (got.push(audio.toString()), '350 кофе') });
+    await t.voice();
+    expect(got).toEqual(['file:v1']);
+    expect(t.sent()[0]).toContain('🎙');
+    expect(plain(t.last())).toContain('Расход: 350,00 ₽');
+    await t.voice(400);
+    expect(t.last()).toContain('Слишком длинное');
+  });
+
+  it('фото: показывает найденное, записывает после подтверждения', async () => {
+    let caption: string | undefined;
+    const t = await testBot({
+      readImage: async (img, _mime, o) => {
+        caption = o.caption;
+        expect(img.toString()).toBe('file:big');
+        return [
+          { type: 'expense', amount: 1234.5, title: 'продукты', date: null },
+          { type: 'income', amount: 500, title: 'возврат', date: null },
+        ];
+      },
+    });
+    await t.photo('чек из магазина');
+    expect(caption).toBe('чек из магазина');
+    expect(plain(t.last())).toContain('1234,50 продукты');
+    await t.text('/balance');
+    expect(plain(t.last())).toContain('0,00 ₽');
+    await t.text('/cancel');
+
+    await t.photo();
+    await t.press('photo:ok');
+    await t.text('/balance');
+    expect(plain(t.last())).toMatch(/[-−]734,50 ₽/);
+  });
+
+  it('фото: исправленный текст вместо подтверждения записывается как обычная запись', async () => {
+    const t = await testBot({ readImage: async () => [{ type: 'expense', amount: 999, title: 'что-то', date: null }] });
+    await t.photo();
+    await t.text('100 такси');
+    await t.press('photo:ok'); // старая кнопка уже ничего не делает
+    await t.text('/total');
+    expect(plain(t.last())).toContain('100,00');
+    expect(plain(t.last())).not.toContain('999');
+  });
+});

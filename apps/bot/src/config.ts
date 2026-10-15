@@ -19,6 +19,13 @@ export const config = {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
+  /** Модели для фото чеков: через запятую или «auto» — бесплатные OpenRouter с вводом картинок */
+  aiVisionModels: (process.env.AI_VISION_MODELS ?? 'auto')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+  /** Распознавание голосовых; без ключа голосовые выключены */
+  deepgramKey: process.env.DEEPGRAM_API_KEY ?? '',
   adminChatId: process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null,
   defaultTimezone: process.env.DEFAULT_TIMEZONE ?? 'Europe/Moscow',
   defaultCurrency: process.env.DEFAULT_CURRENCY ?? DEFAULT_CURRENCY,

@@ -76,7 +76,7 @@ export async function defaultAccountId(db: Db, userId: number): Promise<number> 
   return created!.id;
 }
 
-export type BotStateName = 'idle' | 'balance' | 'category' | 'planned' | 'currency';
+export type BotStateName = 'idle' | 'balance' | 'category' | 'planned' | 'currency' | 'photo';
 
 export async function getState(db: Db, userId: number): Promise<{ state: BotStateName; payload: Record<string, unknown> }> {
   const [s] = await db.select().from(botState).where(eq(botState.userId, userId));

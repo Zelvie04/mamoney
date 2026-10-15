@@ -5,6 +5,7 @@ import { interruptRunningBroadcasts, parseAdminConfig, type SendText } from '@ma
 import { connect } from '@mamoney/db';
 import { llmCategorizer, resolveModels } from './ai.ts';
 import { createBot, setupBotProfile } from './bot.ts';
+import { deepgramTranscriber, llmImageReader, resolveVisionModels } from './media.ts';
 import { config } from './config.ts';
 import { startScheduler } from './cron.ts';
 
@@ -12,8 +13,13 @@ const { db, client } = connect();
 const aiModels = await resolveModels(config.aiBaseUrl, config.aiModels);
 const ai = llmCategorizer({ baseUrl: config.aiBaseUrl, apiKey: config.aiKey, models: aiModels });
 console.log(`AI-категоризация: ${ai ? aiModels.join(', ') : 'выключена'}`);
+const visionModels = await resolveVisionModels(config.aiBaseUrl, config.aiVisionModels);
+const readImage = llmImageReader({ baseUrl: config.aiBaseUrl, apiKey: config.aiKey, models: visionModels });
+console.log(`Фото: ${readImage ? visionModels.join(', ') : 'выключены'}`);
+const transcribe = deepgramTranscriber({ apiKey: config.deepgramKey });
+console.log(`Голосовые: ${transcribe ? 'Deepgram' : 'выключены (нет DEEPGRAM_API_KEY)'}`);
 const defaults = { timezone: config.defaultTimezone, currency: config.defaultCurrency };
-const bot = createBot({ db, token: config.botToken, ai, publicUrl: config.publicUrl, defaults, admin: parseAdminConfig(process.env) });
+const bot = createBot({ db, token: config.botToken, ai, publicUrl: config.publicUrl, defaults, admin: parseAdminConfig(process.env), transcribe, readImage });
 
 await bot.init();
 const base = config.publicUrl.replace(/\/$/, '');
