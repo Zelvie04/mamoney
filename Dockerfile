@@ -10,6 +10,7 @@ COPY apps/miniapp/package.json apps/miniapp/
 RUN npm ci --include=dev --no-audit --no-fund
 
 FROM deps AS miniapp
+COPY tsconfig.base.json ./
 COPY packages/core packages/core
 COPY apps/miniapp apps/miniapp
 RUN npm run build -w @mamoney/miniapp
