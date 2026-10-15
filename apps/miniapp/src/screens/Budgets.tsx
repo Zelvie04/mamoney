@@ -17,14 +17,17 @@ export function BudgetBar({ b, name, onClick }: { b: Budget; name: string; onCli
           <span className="ellipsis">{name}</span>
           <span className="badge" style={{ flexShrink: 0 }}>{b.period === 'week' ? 'нед.' : 'мес.'}</span>
         </span>
-        <span className="num" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{money(Math.round(b.spent))} <span className="muted">/ {money(b.amount)}</span></span>
+        <span className="num" style={{ whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 600 }}>{money(Math.round(b.spent))}</span>
       </div>
       <div className="progress" role="progressbar" aria-valuenow={Math.round(ratio * 100)} aria-valuemin={0} aria-valuemax={100}>
         <div style={{ width: `${Math.min(100, ratio * 100)}%`, background: state.c }} />
       </div>
-      <div className="row spread" style={{ fontSize: 13 }}>
-        <span style={{ color: ratio >= 0.8 ? state.c : 'var(--sub)' }}>{state.t}</span>
-        {b.forecast > b.amount && ratio <= 1 && <span className="muted">прогноз {money(Math.round(b.forecast))}</span>}
+      <div className="row spread" style={{ fontSize: 14, flexWrap: 'wrap', rowGap: 2 }}>
+        <span style={{ color: ratio >= 0.8 ? state.c : 'var(--muted)' }}>{state.t}</span>
+        <span className="muted num" style={{ whiteSpace: 'nowrap' }}>
+          из {money(b.amount)}
+          {b.forecast > b.amount && ratio <= 1 ? ` · прогноз ${money(Math.round(b.forecast))}` : ''}
+        </span>
       </div>
     </div>
   );

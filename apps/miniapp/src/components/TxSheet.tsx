@@ -6,10 +6,29 @@ import { Segments, Sheet, catIcon, toast } from './ui';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** Режим добавления запоминается: как выбрал в прошлый раз, по умолчанию — форма */
+type Mode = 'quick' | 'form';
+const MODE_KEY = 'mamoney.addMode';
+const savedMode = (): Mode => {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'quick' ? 'quick' : 'form';
+  } catch {
+    return 'form';
+  }
+};
+const saveMode = (m: Mode) => {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // без хранилища просто не запоминаем
+  }
+};
+
 /** Добавление (быстрой строкой или формой) и редактирование операции */
 export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; onClose: () => void }) {
   const { categories, refresh } = useApp();
-  const [mode, setMode] = useState<'quick' | 'form'>('quick');
+  const [mode, setModeState] = useState<Mode>(savedMode);
+  const setMode = (m: Mode) => (saveMode(m), setModeState(m));
   const [text, setText] = useState('');
   const [type, setType] = useState<TxType>('expense');
   const [amount, setAmount] = useState('');
@@ -22,7 +41,7 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
   useEffect(() => {
     if (!open) return;
     if (tx) {
-      setMode('form');
+      setModeState('form');
       setType(tx.type === 'income' ? 'income' : 'expense');
       setAmount(String(tx.amount));
       setTitle(tx.title);
@@ -30,7 +49,7 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
       setDate(tx.occurredAt.slice(0, 10));
       setNote(tx.note ?? '');
     } else {
-      setMode('quick');
+      setModeState(savedMode());
       setText('');
       setType('expense');
       setAmount('');

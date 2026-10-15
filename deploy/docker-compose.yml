@@ -46,6 +46,29 @@ services:
       - traefik.http.routers.mamoney.tls.certresolver=${TRAEFIK_CERTRESOLVER}
       - traefik.http.services.mamoney.loadbalancer.server.port=3000
 
+  # Ежедневная копия базы в ./backups (храним 14 последних). Восстановление:
+  # gunzip -c backups/mamoney-ДАТА.sql.gz | docker compose exec -T db psql -U mamoney mamoney
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f=/backups/mamoney-$$(date +%Y-%m-%d_%H%M).sql.gz
+          if pg_dump -h db -U mamoney mamoney | gzip > "$$f.tmp"; then mv "$$f.tmp" "$$f"; echo "backup ok $$f"; else rm -f "$$f.tmp"; echo "backup FAILED"; fi
+          ls -1t /backups/mamoney-*.sql.gz 2>/dev/null | tail -n +15 | xargs -r rm -f
+          sleep 86400
+        done
+    depends_on:
+      db: { condition: service_healthy }
+    mem_limit: 64m
+    networks: [internal]
+
 networks:
   internal: {}
   traefik:

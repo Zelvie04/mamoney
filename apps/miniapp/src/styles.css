@@ -12,6 +12,9 @@
   --link: var(--tg-link-color, #2a78d6);
   --danger: var(--tg-destructive-text-color, #d03b3b);
   --sep: var(--tg-section-separator-color, rgba(11, 11, 11, 0.1));
+  /* Второстепенный текст: из основного цвета, а не из бледного hint Telegram — так читается лучше */
+  --muted: color-mix(in srgb, var(--text) 62%, var(--card));
+  --faint: color-mix(in srgb, var(--text) 50%, var(--card));
 
   --grid: #e1e0d9;
   --axis: #898781;
@@ -57,18 +60,18 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; font-feature-settings: 'cv11', 'ss01'; }
 body { overscroll-behavior: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
 .app { min-height: 100vh; padding: 12px 16px calc(84px + env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; }
-.title { font-size: 22px; font-weight: 700; margin: 4px 0 12px; }
-.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--hint); margin: 20px 4px 8px; }
+.title { font-size: 24px; font-weight: 700; letter-spacing: -0.015em; margin: 4px 0 12px; }
+.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 22px 4px 8px; }
 .card { background: var(--card); border-radius: 14px; padding: 14px 16px; }
 .card + .card { margin-top: 10px; }
 .tiles .card + .card { margin-top: 0; }
-.muted { color: var(--hint); }
+.muted { color: var(--muted); }
 .sub { color: var(--sub); }
 .row { display: flex; align-items: center; gap: 10px; }
 .spread { justify-content: space-between; }
@@ -80,16 +83,16 @@ button { cursor: pointer; }
 
 /* Герой: баланс */
 .hero { padding: 18px 16px; }
-.hero .label { color: var(--hint); font-size: 13px; }
-.hero .value { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin-top: 2px; }
+.hero .label { color: var(--muted); font-size: 14px; }
+.hero .value { font-size: 36px; font-weight: 700; letter-spacing: -0.025em; margin-top: 2px; }
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-.tile .label { color: var(--hint); font-size: 13px; }
-.tile .value { font-size: 20px; font-weight: 650; margin-top: 2px; }
+.tile .label { color: var(--muted); font-size: 14px; }
+.tile .value { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; margin-top: 2px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 1px; }
 
 /* Сегменты (период) */
 .segments { display: flex; background: var(--card); border-radius: 10px; padding: 3px; gap: 2px; overflow-x: auto; scrollbar-width: none; }
-.segments button { flex: 1 0 auto; border: 0; background: none; padding: 7px 10px; border-radius: 8px; font-size: 13px; color: var(--sub); white-space: nowrap; }
+.segments button { flex: 1 0 auto; border: 0; background: none; padding: 8px 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .segments button.on { background: var(--accent); color: var(--accent-text); font-weight: 600; }
 
 /* Списки */
@@ -98,7 +101,7 @@ button { cursor: pointer; }
 .item + .item { border-top: 0.5px solid var(--sep); }
 .item:active { background: var(--sep); }
 .icon { width: 36px; height: 36px; border-radius: 10px; background: var(--track); display: grid; place-items: center; font-size: 18px; flex: none; }
-.day { font-size: 13px; color: var(--hint); margin: 16px 4px 6px; display: flex; justify-content: space-between; }
+.day { font-size: 14px; font-weight: 500; color: var(--muted); margin: 16px 4px 6px; display: flex; justify-content: space-between; }
 
 /* Полоски категорий */
 .bar-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 8px 0; align-items: baseline; }
@@ -108,11 +111,11 @@ button { cursor: pointer; }
 
 .progress { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; margin: 8px 0 6px; position: relative; }
 .progress > div { height: 100%; border-radius: 4px; }
-.badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--track); color: var(--sub); }
+.badge { font-size: 13px; padding: 2px 8px; border-radius: 10px; background: var(--track); color: var(--sub); }
 
 /* Нижнее меню */
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--card); border-top: 0.5px solid var(--sep); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); z-index: 5; }
-.tabbar button { flex: 1; border: 0; background: none; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; color: var(--hint); padding: 4px 0; }
+.tabbar button { flex: 1; border: 0; background: none; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; font-weight: 500; color: var(--faint); padding: 4px 0; }
 .tabbar button.on { color: var(--accent); }
 .tabbar svg { width: 24px; height: 24px; }
 .fab { position: fixed; right: 18px; bottom: calc(76px + env(safe-area-inset-bottom)); width: 56px; height: 56px; border-radius: 28px; border: 0; background: var(--accent); color: var(--accent-text); font-size: 30px; line-height: 1; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2); z-index: 6; }
@@ -126,8 +129,9 @@ button { cursor: pointer; }
 
 /* Формы */
 .field { display: block; margin-top: 10px; }
-.field > span { display: block; font-size: 13px; color: var(--hint); margin: 0 4px 4px; }
-.input { width: 100%; border: 0; border-radius: 12px; background: var(--card); padding: 12px 14px; outline: none; }
+.field > span { display: block; font-size: 14px; color: var(--muted); margin: 0 4px 4px; }
+.input { width: 100%; border: 0; border-radius: 12px; background: var(--card); padding: 13px 14px; outline: none; font-size: 16px; }
+.input::placeholder { color: var(--faint); }
 .input:focus { box-shadow: 0 0 0 2px var(--accent); }
 textarea.input { resize: none; min-height: 72px; }
 .amount-input { font-size: 32px; font-weight: 700; text-align: center; background: none; }
@@ -136,7 +140,7 @@ textarea.input { resize: none; min-height: 72px; }
 .btn.ghost { background: var(--card); color: var(--link); }
 .btn.danger { background: var(--card); color: var(--danger); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { border: 0; border-radius: 16px; padding: 6px 12px; background: var(--card); font-size: 14px; }
+.chip { border: 0; border-radius: 16px; padding: 7px 13px; background: var(--card); font-size: 15px; }
 .chip.on { background: var(--accent); color: var(--accent-text); }
 .toggle { width: 100%; border: 0; background: none; text-align: left; font: inherit; color: inherit; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; }
 .toggle + .toggle { border-top: 0.5px solid var(--sep); }
@@ -145,7 +149,7 @@ textarea.input { resize: none; min-height: 72px; }
 .switch.on { background: var(--accent); }
 .switch.on::after { transform: translateX(18px); }
 
-.empty { text-align: center; color: var(--hint); padding: 32px 16px; }
+.empty { text-align: center; color: var(--muted); padding: 32px 16px; }
 .error { color: var(--danger); padding: 16px; text-align: center; }
 .toast { position: fixed; left: 50%; bottom: calc(150px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: rgba(20, 20, 20, 0.9); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 20; animation: fade 0.15s; max-width: 90vw; }
 .skeleton { background: linear-gradient(90deg, var(--track), var(--card), var(--track)); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 14px; height: 80px; }
@@ -154,18 +158,18 @@ textarea.input { resize: none; min-height: 72px; }
 
 /* Графики */
 .chart { height: 200px; margin: 8px -8px 0 -8px; }
-.legend { display: flex; gap: 14px; font-size: 13px; color: var(--sub); margin-top: 4px; }
+.legend { display: flex; gap: 14px; font-size: 14px; color: var(--muted); margin-top: 4px; }
 .tooltip { background: var(--card); border: 0.5px solid var(--sep); border-radius: 10px; padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
-.tooltip .t { color: var(--hint); margin-bottom: 2px; }
+.tooltip .t { color: var(--muted); margin-bottom: 2px; }
 
 /* Выбор валюты */
 .currency-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
 .currency { display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center; text-align: left; border: 0; border-radius: 12px; background: var(--card); padding: 10px 12px; box-shadow: inset 0 0 0 1.5px transparent; }
-.currency .sym { grid-row: 1 / 3; font-size: 18px; font-weight: 600; color: var(--sub); text-align: center; }
+.currency .sym { grid-row: 1 / 3; font-size: 18px; font-weight: 600; color: var(--muted); text-align: center; }
 .currency .code { font-weight: 600; }
-.currency .name { font-size: 12px; color: var(--hint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.currency .name { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .currency.on { box-shadow: inset 0 0 0 2px var(--accent); }
 .currency.on .sym { color: var(--accent); }
 .currency.wide { display: flex; width: 100%; gap: 8px; align-items: baseline; margin-top: 8px; }
 .balance-btn { all: unset; cursor: pointer; display: block; width: 100%; }
-.balance-btn .edit { font-size: 13px; color: var(--link); margin-top: 4px; }
+.balance-btn .edit { font-size: 14px; font-weight: 500; color: var(--link); margin-top: 4px; }

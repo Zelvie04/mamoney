@@ -43,7 +43,7 @@ const longDay = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString('ru-
 /** Расходы по дням: одна серия, без легенды (название — в заголовке карточки) */
 export function DailyChart({ data }: { data: { day: string; expense: number }[] }) {
   const c = useColors();
-  const axis = { stroke: c.axis, fontSize: 11, tickLine: false, axisLine: false } as const;
+  const axis = { stroke: c.axis, fontSize: 12, tickLine: false, axisLine: false } as const;
   return (
     <div className="chart" role="img" aria-label="Расходы по дням">
       <ResponsiveContainer>
@@ -62,7 +62,7 @@ export function DailyChart({ data }: { data: { day: string; expense: number }[] 
 /** Доходы и расходы по месяцам: две серии, одна ось, легенда + таблица рядом */
 export function MonthlyChart({ data }: { data: { month: string; income: number; expense: number }[] }) {
   const c = useColors();
-  const axis = { stroke: c.axis, fontSize: 11, tickLine: false, axisLine: false } as const;
+  const axis = { stroke: c.axis, fontSize: 12, tickLine: false, axisLine: false } as const;
   return (
     <>
       <div className="legend">
