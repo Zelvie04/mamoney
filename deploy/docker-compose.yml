@@ -1,4 +1,4 @@
-# Разворачивается на VPS рядом с n8n. HTTPS — через уже работающий Traefik из /opt/beget/n8n.
+# Разворачивается на VPS рядом с n8n. Один контейнер app: вебхук бота, API и Mini App (/app/). HTTPS — через уже работающий Traefik из /opt/beget/n8n.
 # Перед первым запуском: cp ../.env.example .env и заполнить.
 name: mamoney
 
@@ -27,7 +27,7 @@ services:
       db: { condition: service_healthy }
     networks: [internal]
 
-  bot:
+  app:
     build: ..
     restart: unless-stopped
     env_file: .env
@@ -40,10 +40,35 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=${TRAEFIK_NETWORK}
-      - traefik.http.routers.mamoney-bot.rule=Host(`${APP_HOST}`) && (PathPrefix(`/tg/`) || Path(`/healthz`))
-      - traefik.http.routers.mamoney-bot.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
-      - traefik.http.routers.mamoney-bot.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.services.mamoney-bot.loadbalancer.server.port=3000
+      - traefik.http.routers.mamoney.rule=Host(`${APP_HOST}`)
+      - traefik.http.routers.mamoney.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.mamoney.tls=true
+      - traefik.http.routers.mamoney.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.mamoney.loadbalancer.server.port=3000
+
+  # Ежедневная копия базы в ./backups (храним 14 последних). Восстановление:
+  # gunzip -c backups/mamoney-ДАТА.sql.gz | docker compose exec -T db psql -U mamoney mamoney
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        umask 077
+        while true; do
+          f=/backups/mamoney-$$(date +%Y-%m-%d_%H%M).sql.gz
+          if pg_dump -h db -U mamoney mamoney | gzip > "$$f.tmp"; then mv "$$f.tmp" "$$f"; echo "backup ok $$f"; else rm -f "$$f.tmp"; echo "backup FAILED"; fi
+          ls -1t /backups/mamoney-*.sql.gz 2>/dev/null | tail -n +15 | xargs -r rm -f
+          sleep 86400
+        done
+    depends_on:
+      db: { condition: service_healthy }
+    mem_limit: 64m
+    networks: [internal]
 
 networks:
   internal: {}

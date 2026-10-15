@@ -72,7 +72,7 @@ describe('бот', () => {
     await t.text('/future');
     await t.text('ремонт машины');
     await t.text('/show_future');
-    expect(t.last()).toBe('Планы:\n• ремонт машины');
+    expect(t.last()).toBe('Будущие траты:\n• ремонт машины');
   });
 
   it('категории: добавить и убрать', async () => {
@@ -97,5 +97,157 @@ describe('бот', () => {
     const t = await testBot();
     await t.text('привет');
     expect(t.last()).toContain('Не понял запись');
+  });
+});
+
+import { upsertBudget, listCategories } from '@mamoney/domain';
+describe('бюджеты в боте', () => {
+  it('предупреждает при 80% и при превышении', async () => {
+    const t = await testBot();
+    await t.text('/start');
+    const [u] = await t.db.execute<any>("SELECT id FROM users WHERE tg_id = 42" as any).then((r: any) => r.rows ?? r);
+    const cafe = (await listCategories(t.db, u.id, 'expense')).find((c) => c.name === 'кафе')!;
+    await upsertBudget(t.db, u.id, { categoryId: cafe.id, period: 'month', amount: 1000 });
+    await t.text('500 обед #кафе');
+    expect(t.last()).not.toContain('Бюджет');
+    await t.text('350 ужин #кафе');
+    expect(plain(t.last())).toContain('Бюджет «кафе»: потрачено 85%');
+    await t.text('300 кофе #кафе');
+    expect(plain(t.last())).toContain('превышен');
+  });
+});
+
+describe('валюта в боте', () => {
+  it('при первом /start спрашивает валюту, выбор из списка и своя', async () => {
+    const t = await testBot();
+    await t.text('/start');
+    expect(t.last()).toContain('Какую валюту показывать');
+    expect(JSON.stringify(t.calls.at(-1)!.payload.reply_markup)).toContain('cur:BYN');
+
+    await t.press('cur:BYN');
+    const edit = t.calls.find((c) => c.method === 'editMessageText')!;
+    expect(plain(edit.payload.text)).toContain('Белорусский рубль');
+
+    t.reset();
+    await t.text('/start');
+    expect(t.sent().some((s) => s.includes('Какую валюту'))).toBe(false);
+
+    await t.press('cur:?');
+    await t.text('баллов');
+    expect(plain(t.last())).toContain('1 500 баллов');
+    await t.text('200 кофе');
+    expect(plain(t.last())).toContain('Расход: 200 баллов');
+
+    await t.press('cur:0');
+    await t.text('100 чай');
+    expect(plain(t.last())).toContain('Расход: 100 чай');
+  });
+});
+
+describe('будущие траты и статистика в боте', () => {
+  it('трата с будущей датой уходит в планы, баланс не меняется', async () => {
+    const t = await testBot();
+    const d = new Date(Date.now() + 5 * 86400_000).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit' });
+    await t.text(`${d} 5000 ремонт`);
+    expect(t.last()).toContain('В будущие траты: ремонт');
+    await t.text('/balance');
+    expect(plain(t.last())).toContain('0,00 ₽');
+    await t.text('/show_future');
+    expect(plain(t.last())).toContain('ремонт — 5 000,00 ₽');
+  });
+
+  it('/stats только владельцу', async () => {
+    const other = await testBot();
+    await other.text('/stats');
+    expect(other.last()).toContain('Не знаю такой команды');
+    const t = await testBot({ admin: { ids: [42], usernames: [] } });
+    await t.text('100 кофе');
+    await t.text('/stats');
+    expect(plain(t.last())).toMatch(/Пользователи: 1.*Операции: 1/s);
+  });
+});
+
+describe('голосовые и фото', () => {
+  it('без ключей вежливо отказывает', async () => {
+    const t = await testBot();
+    await t.voice();
+    expect(t.last()).toContain('Голосовые пока не подключены');
+    await t.photo();
+    expect(t.last()).toContain('Фото пока не подключены');
+  });
+
+  it('голосовое распознаётся и записывается как текст', async () => {
+    const got: string[] = [];
+    const t = await testBot({ transcribe: async (audio) => (got.push(audio.toString()), '350 кофе') });
+    await t.voice();
+    expect(got).toEqual(['file:v1']);
+    expect(t.sent()[0]).toContain('🎙');
+    expect(plain(t.last())).toContain('Расход: 350,00 ₽');
+    await t.voice(400);
+    expect(t.last()).toContain('Слишком длинное');
+  });
+
+  it('фото: показывает найденное, записывает после подтверждения', async () => {
+    let caption: string | undefined;
+    const t = await testBot({
+      readImage: async (img, _mime, o) => {
+        caption = o.caption;
+        expect(img.toString()).toBe('file:big');
+        return [
+          { type: 'expense', amount: 1234.5, title: 'продукты', date: null },
+          { type: 'income', amount: 500, title: 'возврат', date: null },
+        ];
+      },
+    });
+    await t.photo('чек из магазина');
+    expect(caption).toBe('чек из магазина');
+    expect(plain(t.last())).toContain('1234,50 продукты');
+    await t.text('/balance');
+    expect(plain(t.last())).toContain('0,00 ₽');
+    await t.text('/cancel');
+
+    await t.photo();
+    await t.press('photo:ok');
+    await t.text('/balance');
+    expect(plain(t.last())).toMatch(/[-−]734,50 ₽/);
+  });
+
+  it('фото: исправленный текст вместо подтверждения записывается как обычная запись', async () => {
+    const t = await testBot({ readImage: async () => [{ type: 'expense', amount: 999, title: 'что-то', date: null }] });
+    await t.photo();
+    await t.text('100 такси');
+    await t.press('photo:ok'); // старая кнопка уже ничего не делает
+    await t.text('/total');
+    expect(plain(t.last())).toContain('100,00');
+    expect(plain(t.last())).not.toContain('999');
+  });
+});
+
+describe('повторная доставка', () => {
+  it('то же обновление от Telegram обрабатывается один раз', async () => {
+    let calls = 0;
+    const t = await testBot({ readImage: async () => (calls++, [{ type: 'expense', amount: 92.84, title: 'жку', date: null }]) });
+    const update = {
+      update_id: 777,
+      message: {
+        message_id: 1, date: Math.floor(Date.now() / 1000),
+        chat: { id: 42, type: 'private', first_name: 'Тест' }, from: { id: 42, is_bot: false, first_name: 'Тест' },
+        photo: [{ file_id: 'p', file_unique_id: 'p', width: 10, height: 10 }],
+      },
+    } as any;
+    await t.bot.handleUpdate(update);
+    await t.bot.handleUpdate(update);
+    expect(calls).toBe(1);
+    expect(t.sent().filter((m) => m.includes('Нашёл на фото'))).toHaveLength(1);
+  });
+});
+
+describe('лимит распознавания', () => {
+  it('после дневного лимита голосовые не распознаются', async () => {
+    let n = 0;
+    const t = await testBot({ transcribe: async () => (n++, '10 чай') });
+    for (let i = 0; i < 31; i++) await t.voice();
+    expect(n).toBe(30);
+    expect(t.last()).toContain('лимит голосовых и фото исчерпан');
   });
 });

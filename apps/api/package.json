@@ -1,0 +1,20 @@
+{
+  "name": "@mamoney/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.6",
+    "@mamoney/core": "*",
+    "@mamoney/db": "*",
+    "fastify": "^5.12.7",
+    "zod": "^4.6.7",
+    "@mamoney/domain": "*"
+  }
+}

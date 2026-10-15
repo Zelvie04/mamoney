@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { schema, type Db } from '@mamoney/db';
 import { createBot } from '../src/bot.ts';
-import type { AiCategorizer } from '../src/services/categories.ts';
+import type { AiCategorizer } from '@mamoney/domain';
 
 export async function testDb(): Promise<Db> {
   const pg = new PGlite();
@@ -19,7 +19,9 @@ export async function testDb(): Promise<Db> {
 export interface Call { method: string; payload: any }
 
 /** Бот с перехватом всех запросов к Telegram API. */
-export async function testBot(opts: { ai?: AiCategorizer; db?: Db } = {}) {
+export async function testBot(
+  opts: { ai?: AiCategorizer; db?: Db; admin?: { ids: number[]; usernames: string[] } } & Pick<Parameters<typeof createBot>[0], 'transcribe' | 'readImage'> = {},
+) {
   const db = opts.db ?? (await testDb());
   const calls: Call[] = [];
   let msgId = 1000;
@@ -27,6 +29,10 @@ export async function testBot(opts: { ai?: AiCategorizer; db?: Db } = {}) {
     db,
     token: 'test',
     ai: opts.ai,
+    admin: opts.admin,
+    transcribe: opts.transcribe,
+    readImage: opts.readImage,
+    downloadFile: async (id) => Buffer.from(`file:${id}`),
     publicUrl: 'https://mamoney.example',
     defaults: { timezone: 'Europe/Moscow', currency: 'RUB' },
     botInfo: {
@@ -56,6 +62,21 @@ export async function testBot(opts: { ai?: AiCategorizer; db?: Db } = {}) {
       },
     } as any);
   };
+  const media = async (extra: Record<string, unknown>) => {
+    await bot.handleUpdate({
+      update_id: updateId++,
+      message: {
+        message_id: updateId,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: user.id, type: 'private', first_name: user.first_name },
+        from: user,
+        ...extra,
+      },
+    } as any);
+  };
+  const voice = (duration = 3) => media({ voice: { file_id: 'v1', file_unique_id: 'v1', duration, mime_type: 'audio/ogg' } });
+  const photo = (caption?: string) =>
+    media({ photo: [{ file_id: 'small', file_unique_id: 's', width: 90, height: 90 }, { file_id: 'big', file_unique_id: 'b', width: 1280, height: 1280 }], caption });
   const press = async (data: string) => {
     await bot.handleUpdate({
       update_id: updateId++,
@@ -67,5 +88,5 @@ export async function testBot(opts: { ai?: AiCategorizer; db?: Db } = {}) {
   };
   const sent = () => calls.filter((c) => c.method === 'sendMessage').map((c) => c.payload.text as string);
   const last = () => sent().at(-1) ?? '';
-  return { bot, db, calls, text, press, sent, last, reset: () => (calls.length = 0) };
+  return { bot, db, calls, text, voice, photo, press, sent, last, reset: () => (calls.length = 0) };
 }

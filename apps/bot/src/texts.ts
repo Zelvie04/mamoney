@@ -1,6 +1,6 @@
 export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-export const HELP = `Пиши операции обычным текстом, сумму можно ставить в любом месте:
+export const HELP = `Присылай операции текстом, голосовым или фото чека. В тексте сумму можно ставить в любом месте:
 <code>350 кофе</code>
 <code>такси 1.5к</code>
 <code>вчера 1200 продукты</code>
@@ -19,6 +19,7 @@ export const COMMANDS = `/start — приветствие и инструкци
 /month — прошлый месяц
 /last — последние операции
 /balance — баланс и его изменение
+/currency — валюта
 /total — доходы и расходы за всё время
 /category — категории
 /future — записать планы на будущее
@@ -33,3 +34,8 @@ export const BOT_COMMANDS: { command: string; description: string }[] = COMMANDS
   const [c, d] = l.split(' — ');
   return { command: c!.slice(1), description: d! };
 });
+
+/** Описание бота: видно в пустом чате до нажатия «Старт» */
+export const BOT_DESCRIPTION =
+  'MaMoney — учёт доходов и расходов в Telegram.\n\nПрисылай текст («350 кофе»), голосовое или фото чека — я всё запишу и разложу по категориям. Отчёты, бюджеты и графики — в приложении.';
+export const BOT_SHORT_DESCRIPTION = 'Учёт денег: пиши текстом, голосом или присылай фото чека.';

@@ -2,11 +2,16 @@ import { Bot, type Context, InlineKeyboard, InputFile } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import {
   type Period,
+  CURRENCY_PRESETS,
+  DEFAULT_CURRENCY,
   buildReport,
+  currencyName,
   formatMoney,
   formatReport,
   parseMessage,
   periodRange,
+  isFutureDay,
+  localDate,
   resolveOccurredAt,
 } from '@mamoney/core';
 import type { Db } from '@mamoney/db';
@@ -17,8 +22,8 @@ import {
   listCategories,
   rememberRule,
   resolveCategory,
-} from './services/categories.ts';
-import { addPlanned, clearPlanned, listPlanned } from './services/planned.ts';
+} from '@mamoney/domain';
+import { addPlanned, budgetAlerts, clearPlanned, listPlanned } from '@mamoney/domain';
 import {
   addTransaction,
   clearHistory,
@@ -30,9 +35,11 @@ import {
   setBalance,
   totals,
   updateTransaction,
-} from './services/transactions.ts';
-import { type User, defaultAccountId, ensureUser, getState, markBlocked, setState } from './services/users.ts';
-import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
+} from '@mamoney/domain';
+import { adminStats, formatStats, isAdmin } from '@mamoney/domain';
+import { type User, defaultAccountId, ensureUser, exportCsv, getState, markBlocked, setCurrency, setState } from '@mamoney/domain';
+import { BOT_COMMANDS, BOT_DESCRIPTION, BOT_SHORT_DESCRIPTION, COMMANDS, HELP, esc } from './texts.ts';
+import { itemsToLines, type ImageReader, type Transcriber } from './media.ts';
 
 export interface BotDeps {
   db: Db;
@@ -40,6 +47,16 @@ export interface BotDeps {
   ai?: AiCategorizer;
   publicUrl?: string;
   defaults: { timezone: string; currency: string };
+  /** Кому доступна /stats */
+  admin?: { ids: number[]; usernames: string[] };
+  /** Распознавание голосовых (Deepgram) */
+  transcribe?: Transcriber;
+  /** Чтение фото чеков и скриншотов (модель с картинками) */
+  readImage?: ImageReader;
+  /** Скачать файл из Telegram; по умолчанию через Bot API */
+  downloadFile?: (fileId: string) => Promise<Buffer>;
+  /** Сколько голосовых и фото в сутки распознаём одному человеку (по умолчанию 30) */
+  mediaDailyLimit?: number;
   /** Для тестов: готовые данные бота, чтобы не ходить в getMe */
   botInfo?: UserFromGetMe;
 }
@@ -61,6 +78,16 @@ export function createBot(deps: BotDeps) {
   const appUrl = deps.publicUrl ? `${deps.publicUrl.replace(/\/$/, '')}/app/` : null;
 
   // Блокировка бота: только помечаем, данные не трогаем
+  // Telegram может прислать одно обновление повторно (например, если ответ на вебхук задержался) — второе пропускаем
+  const seen = new Set<number>();
+  bot.use(async (ctx, next) => {
+    const id = ctx.update.update_id;
+    if (seen.has(id)) return;
+    seen.add(id);
+    if (seen.size > 5000) seen.delete(seen.values().next().value!);
+    await next();
+  });
+
   bot.on('my_chat_member', async (ctx) => {
     const status = ctx.myChatMember.new_chat_member.status;
     if (ctx.chat.type === 'private' && status === 'kicked') await markBlocked(db, ctx.chat.id);
@@ -82,17 +109,44 @@ export function createBot(deps: BotDeps) {
     await next();
   });
 
-  const tidy = async (ctx: Ctx) => {
+  const tidyMsg = async (ctx: Ctx) => {
     if (ctx.user.settings.cleanChat === false || !ctx.message) return;
     await ctx.deleteMessage().catch(() => {});
   };
+  const tidy = tidyMsg;
+
+  const currencyKb = () => {
+    const kb = new InlineKeyboard();
+    CURRENCY_PRESETS.forEach((c, i) => {
+      kb.text(c.code, `cur:${c.code}`);
+      if (i % 5 === 4) kb.row();
+    });
+    return kb.row().text(`«${DEFAULT_CURRENCY}»`, 'cur:-').text('Без валюты', 'cur:0').row().text('Своя…', 'cur:?');
+  };
+  const askCurrency = (ctx: Ctx) =>
+    ctx.reply(
+      `Какую валюту показывать? Сейчас: <b>${esc(currencyName(ctx.user.currency))}</b>.\nМожно выбрать из списка, написать свою или оставить без подписи. Поменять потом — /currency или в приложении.`,
+      { parse_mode: 'HTML', reply_markup: currencyKb() },
+    );
 
   bot.command('start', async (ctx) => {
     const kb = appUrl ? new InlineKeyboard().webApp('Открыть приложение', appUrl) : undefined;
     await ctx.reply(
-      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\n${HELP}`,
+      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\nПрисылай сюда текст, голосовое или фото чека — я всё запишу. Посмотреть, поправить и настроить всё можно в приложении (кнопка ниже).\n\n${HELP}`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
+    if (!ctx.user.settings.currencyChosen) await askCurrency(ctx);
+  });
+
+  bot.command('currency', async (ctx) => {
+    await askCurrency(ctx);
+    await tidy(ctx);
+  });
+
+  // Общая статистика — только владельцу; остальным команда как будто не существует
+  bot.command('stats', async (ctx) => {
+    if (!deps.admin || !isAdmin(ctx.user, deps.admin)) return ctx.reply('Не знаю такой команды. Список: /commands');
+    await ctx.reply(formatStats(await adminStats(db)), { parse_mode: 'HTML' });
   });
 
   bot.command(['commands', 'help'], (ctx) => ctx.reply(COMMANDS));
@@ -164,7 +218,9 @@ export function createBot(deps: BotDeps) {
 
   bot.command('show_future', async (ctx) => {
     const list = await listPlanned(db, ctx.user.id);
-    await ctx.reply(list.length ? `Планы:\n${list.map((p) => `• ${p.title}`).join('\n')}` : 'Планов пока нет. Добавить — /future');
+    const line = (p: (typeof list)[number]) =>
+      `• ${p.title}${p.amount ? ` — ${money(ctx.user, p.amount)}` : ''}${p.dueDate ? ` (${p.dueDate.split('-').reverse().slice(0, 2).join('.')})` : ''}`;
+    await ctx.reply(list.length ? `Будущие траты:\n${list.map(line).join('\n')}` : 'Планов пока нет. Добавить — /future или запиши трату с будущей датой: «20.11 5000 ремонт»');
     await tidy(ctx);
   });
 
@@ -187,15 +243,7 @@ export function createBot(deps: BotDeps) {
   });
 
   bot.command('export', async (ctx) => {
-    const rows = await recentTransactions(db, ctx.user.id, 100_000);
-    const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    const csv = [
-      'date;type;amount;currency;category;title',
-      ...rows.reverse().map(({ tx, category }) =>
-        [tx.occurredAt.toISOString(), tx.type, tx.amount.toFixed(2).replace('.', ','), tx.currency, q(category ?? ''), q(tx.title)].join(';'),
-      ),
-    ].join('\n');
-    await ctx.replyWithDocument(new InputFile(Buffer.from('﻿' + csv, 'utf8'), 'mamoney.csv'));
+    await ctx.replyWithDocument(new InputFile(await exportCsv(db, ctx.user.id), 'mamoney.csv'));
   });
 
   // ----- Кнопки -----
@@ -203,6 +251,18 @@ export function createBot(deps: BotDeps) {
     await setState(db, ctx.user.id, 'idle');
     await ctx.answerCallbackQuery('Отменено');
     await ctx.deleteMessage().catch(() => {});
+  });
+
+  bot.callbackQuery(/^cur:(.+)$/, async (ctx) => {
+    const v = ctx.match[1]!;
+    if (v === '?') {
+      await setState(db, ctx.user.id, 'currency');
+      await ctx.answerCallbackQuery();
+      return ctx.editMessageText('Напиши, как подписывать суммы: код (GBP), символ (₿) или слово (баллов). До 12 символов.', { reply_markup: cancelKb });
+    }
+    const u = await setCurrency(db, ctx.user.id, v === '-' ? DEFAULT_CURRENCY : v === '0' ? '' : v);
+    await ctx.answerCallbackQuery('Сохранено');
+    await ctx.editMessageText(`Валюта: ${esc(currencyName(u.currency))}. Например: ${money(u, 1500)}`).catch(() => {});
   });
 
   bot.callbackQuery('clear:yes', async (ctx) => {
@@ -253,10 +313,106 @@ export function createBot(deps: BotDeps) {
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) return ctx.reply('Не знаю такой команды. Список: /commands');
+    return handleText(ctx, text);
+  });
+
+  const MAX_FILE = 20 * 1024 * 1024; // больше Bot API скачать не даёт
+  // Распознавание голоса и фото платное или с общим лимитом: не даём одному человеку израсходовать всё
+  const mediaLimit = deps.mediaDailyLimit ?? 30;
+  const mediaUse = new Map<number, { day: string; n: number }>();
+  const mediaAllowed = (userId: number) => {
+    const day = new Date().toISOString().slice(0, 10);
+    const u = mediaUse.get(userId);
+    const n = u?.day === day ? u.n : 0;
+    if (n >= mediaLimit) return false;
+    mediaUse.set(userId, { day, n: n + 1 });
+    return true;
+  };
+  const LIMIT_TEXT = 'На сегодня лимит голосовых и фото исчерпан. Напиши текстом, например: 350 кофе';
+  const download =
+    deps.downloadFile ??
+    (async (fileId: string) => {
+      const f = await bot.api.getFile(fileId);
+      const res = await fetch(`https://api.telegram.org/file/bot${deps.token}/${f.file_path}`, { signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new Error(`file ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    });
+
+  // Голосовые: распознаём и обрабатываем как обычный текст
+  bot.on(['message:voice', 'message:audio', 'message:video_note'], async (ctx) => {
+    if (!deps.transcribe) return ctx.reply('Голосовые пока не подключены. Напиши текстом, например: 350 кофе');
+    const m = ctx.message;
+    const media = m.voice ?? m.audio ?? m.video_note!;
+    if ((media.duration ?? 0) > 300) return ctx.reply('Слишком длинное голосовое: до 5 минут.');
+    if ((media.file_size ?? 0) > MAX_FILE) return ctx.reply('Файл слишком большой.');
+    if (!mediaAllowed(ctx.user.id)) return ctx.reply(LIMIT_TEXT);
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    const mime = m.voice?.mime_type ?? m.audio?.mime_type ?? (m.video_note ? 'video/mp4' : 'audio/ogg');
+    let text: string | null = null;
+    try {
+      text = await deps.transcribe(await download(media.file_id), mime);
+    } catch (e) {
+      console.error('Голосовое', (e as Error).message);
+    }
+    if (!text) return ctx.reply('Не получилось разобрать голосовое. Попробуй ещё раз или напиши текстом.');
+    await ctx.reply(`🎙 <i>${esc(text)}</i>`, { parse_mode: 'HTML' });
+    return handleText(ctx, text, { keepMessage: true });
+  });
+
+  // Фото чека или скриншота: показываем, что нашли, и записываем после подтверждения
+  bot.on(['message:photo', 'message:document'], async (ctx, next) => {
+    const m = ctx.message;
+    const doc = m.document;
+    if (doc && !doc.mime_type?.startsWith('image/')) return next();
+    if (!deps.readImage) return ctx.reply('Фото пока не подключены. Напиши текстом, например: 350 кофе');
+    const file = doc ?? m.photo!.at(-1)!;
+    if ((file.file_size ?? 0) > MAX_FILE) return ctx.reply('Файл слишком большой.');
+    if (!mediaAllowed(ctx.user.id)) return ctx.reply(LIMIT_TEXT);
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    let items: Awaited<ReturnType<ImageReader>> = null;
+    try {
+      items = await deps.readImage(await download(file.file_id), doc?.mime_type ?? 'image/jpeg', {
+        today: localDate(new Date(), ctx.user.timezone),
+        caption: m.caption?.trim() || undefined,
+      });
+    } catch (e) {
+      console.error('Фото', (e as Error).message);
+    }
+    if (!items) return ctx.reply('Не получилось прочитать фото: бесплатные модели сейчас перегружены. Попробуй через минуту или напиши текстом, например: 92,84 коммуналка');
+    if (!items.length) return ctx.reply('Не нашёл на фото сумм. Можно написать текстом, например: 350 кофе');
+    const lines = itemsToLines(items);
+    await setState(db, ctx.user.id, 'photo', { lines });
+    await ctx.reply(
+      `📷 Нашёл на фото:\n<code>${esc(lines.join('\n'))}</code>\n\nЗаписать? Если что-то не так, пришли исправленный текст, и я запишу его.`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('Записать', 'photo:ok').text('Отмена', 'cancel') },
+    );
+  });
+
+  bot.callbackQuery('photo:ok', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const { state, payload } = await getState(db, ctx.user.id);
+    const lines = Array.isArray(payload.lines) ? (payload.lines as string[]) : [];
+    if (state !== 'photo' || !lines.length) return ctx.editMessageReplyMarkup().catch(() => {});
+    await setState(db, ctx.user.id, 'idle');
+    await ctx.editMessageReplyMarkup().catch(() => {});
+    return handleText(ctx, lines.join('\n'), { keepMessage: true });
+  });
+
+  /** Обработка текста: из сообщения, распознанного голосового или фото */
+  const handleText = async (ctx: Ctx, text: string, { keepMessage = false } = {}) => {
+    const tidy = (c: Ctx) => (keepMessage ? Promise.resolve() : tidyMsg(c));
     const { state } = await getState(db, ctx.user.id);
+    if (state === 'photo') await setState(db, ctx.user.id, 'idle'); // прислал исправленный текст вместо подтверждения
+
+    if (state === 'currency') {
+      const u = await setCurrency(db, ctx.user.id, text);
+      await setState(db, ctx.user.id, 'idle');
+      await ctx.reply(`Валюта: ${esc(currencyName(u.currency))}. Например: ${money(u, 1500)}`);
+      return tidy(ctx);
+    }
 
     if (state === 'balance') {
-      const v = Number(text.replace(/[\s ]/g, '').replace(',', '.').replace(/[₽р]$/i, ''));
+      const v = Number(text.replace(/[\s ]/g, '').replace(',', '.').replace(/[^\d.-]+$/, ''));
       if (!Number.isFinite(v)) return ctx.reply('Пришли просто число, например 15000 или -200,50', { reply_markup: cancelKb });
       await setBalance(db, ctx.user.id, await defaultAccountId(db, ctx.user.id), v);
       await setState(db, ctx.user.id, 'idle');
@@ -300,6 +456,15 @@ export function createBot(deps: BotDeps) {
         await ctx.reply(`Пропустил строку «${lines[i]}»: не нашёл ${r.error === 'no_amount' ? 'сумму' : 'название'}.`);
         continue;
       }
+      const occurredAt = resolveOccurredAt(r.tx.date, r.tx.dayOffset, ctx.user.timezone);
+      if (isFutureDay(occurredAt, ctx.user.timezone)) {
+        const due = localDate(occurredAt, ctx.user.timezone);
+        await addPlanned(db, ctx.user.id, r.tx.title, { amount: r.tx.amount, dueDate: due, type: r.tx.type });
+        await ctx.reply(
+          `🗓 В будущие траты: ${r.tx.title}, ${money(ctx.user, r.tx.amount)} на ${due.split('-').reverse().join('.')}\nВ баланс не идёт, пока не запишешь как операцию. Все планы — /show_future`,
+        );
+        continue;
+      }
       const { category } = await resolveCategory(
         db,
         ctx.user.id,
@@ -314,19 +479,25 @@ export function createBot(deps: BotDeps) {
         amount: r.tx.amount,
         currency: ctx.user.currency,
         title: r.tx.title,
-        occurredAt: resolveOccurredAt(r.tx.date, r.tx.dayOffset, ctx.user.timezone),
+        occurredAt,
         source: 'bot',
         rawText: lines[i] ?? text,
       });
-      await ctx.reply(await recordText(ctx.user, t.type, t.amount, t.title, category.name), {
-        parse_mode: 'HTML',
-        reply_markup: recordKb(t.id),
-      });
+      let msg = await recordText(ctx.user, t.type, t.amount, t.title, category.name);
+      if (t.type === 'expense') {
+        for (const b of await budgetAlerts(db, ctx.user.id, category.id, ctx.user.timezone)) {
+          const name = b.categoryId ? category.name : 'все расходы';
+          msg += b.ratio > 1
+            ? `\n⚠️ Бюджет «${esc(name)}» превышен: ${money(ctx.user, b.spent)} из ${money(ctx.user, b.amount)}`
+            : `\n❗ Бюджет «${esc(name)}»: потрачено ${Math.round(b.ratio * 100)}% (${money(ctx.user, b.spent)} из ${money(ctx.user, b.amount)})`;
+        }
+      }
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: recordKb(t.id) });
     }
     await tidy(ctx);
-  });
+  };
 
-  bot.on('message', (ctx) => ctx.reply('Пока понимаю только текст. Например: 350 кофе'));
+  bot.on('message', (ctx) => ctx.reply('Понимаю текст, голосовые и фото чеков. Например: 350 кофе'));
 
   bot.catch((err) => {
     console.error('Ошибка в обработчике', err.error);
@@ -337,6 +508,8 @@ export function createBot(deps: BotDeps) {
 
 export async function setupBotProfile(bot: Bot<any>, appUrl: string | null) {
   await bot.api.setMyCommands(BOT_COMMANDS);
+  await bot.api.setMyDescription(BOT_DESCRIPTION);
+  await bot.api.setMyShortDescription(BOT_SHORT_DESCRIPTION);
   if (appUrl) {
     await bot.api.setChatMenuButton({ menu_button: { type: 'web_app', text: 'Приложение', web_app: { url: appUrl } } });
   }
