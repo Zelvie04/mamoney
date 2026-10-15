@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Category, type Me, type Tx } from './api';
+import { CurrencyPicker } from './components/Currency';
 import { TxSheet } from './components/TxSheet';
 import { ErrorBox, Toaster } from './components/ui';
 import { Ctx } from './context';
@@ -53,6 +54,14 @@ export function App() {
   );
 
   if (error && !me) return <div className="app"><ErrorBox error={error} retry={refresh} /></div>;
+  if (me && !me.user.settings.currencyChosen) {
+    return (
+      <main className="app">
+        <CurrencyPicker intro current={me.user.currency} onSaved={refresh} />
+        <Toaster />
+      </main>
+    );
+  }
 
   return (
     <Ctx.Provider value={ctx}>

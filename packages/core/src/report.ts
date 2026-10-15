@@ -1,3 +1,4 @@
+import { formatMoney } from './currency.js';
 import type { TxType } from './parse.js';
 
 export interface ReportRow { type: TxType; amount: number | string; category: string | null; title: string }
@@ -50,13 +51,9 @@ export function buildReport(rows: readonly ReportRow[]): Report {
   return { income, expense, net: round(income - expense), incomes, expenses };
 }
 
-export function formatMoney(n: number, currency = 'RUB'): string {
-  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency, maximumFractionDigits: 2 }).format(n);
-}
-
 /** Текст отчёта для Telegram (HTML). detailed — с разбивкой по позициям, как недельный отчёт в n8n. */
 export function formatReport(title: string, r: Report, opts: { detailed?: boolean; currency?: string } = {}): string {
-  const f = (n: number) => formatMoney(n, opts.currency);
+  const f = (n: number) => formatMoney(n, opts.currency ?? 'RUB');
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const section = (name: string, cats: CategorySum[]) => {
     if (!cats.length) return `<b>${name}</b>\n—`;

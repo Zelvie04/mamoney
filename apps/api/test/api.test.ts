@@ -7,13 +7,17 @@ const user = { id: 77, first_name: 'Аня', username: 'anya' };
 
 async function setup() {
   const db = await testDb();
-  const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' } });
+  const sentDocs: { chatId: number; file: Buffer; filename: string }[] = [];
+  const app = await buildApi({
+    db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' },
+    sendDocument: async (chatId, file, filename) => void sentDocs.push({ chatId, file, filename }),
+  });
   const auth = { authorization: `tma ${signInitData(user, TOKEN)}` };
   const call = async (method: string, url: string, body?: unknown) => {
     const r = await app.inject({ method: method as any, url, headers: auth, payload: body as any });
     return { status: r.statusCode, body: r.body ? (() => { try { return r.json(); } catch { return r.body; } })() : null };
   };
-  return { app, call, db };
+  return { app, call, db, sentDocs };
 }
 
 describe('initData', () => {
@@ -112,5 +116,33 @@ describe('API', () => {
     const s = await call('PATCH', '/api/settings', { currency: 'byn', weeklyReport: false });
     expect(s.body).toMatchObject({ currency: 'BYN', settings: { weeklyReport: false, cleanChat: true } });
     expect((await call('PATCH', '/api/settings', { timezone: 'Mars/Base' })).status).toBe(400);
+  });
+
+  it('всё без бота: валюта, баланс, выгрузка, очистка, «всё время»', async () => {
+    const { call, sentDocs } = await setup();
+    expect((await call('GET', '/api/me')).body.user.settings.currencyChosen).toBeUndefined();
+
+    const s = await call('PATCH', '/api/settings', { currency: 'byn' });
+    expect(s.body).toMatchObject({ currency: 'BYN', settings: { currencyChosen: true } });
+    expect((await call('PATCH', '/api/settings', { currency: '' })).body.currency).toBe('');
+    expect((await call('PATCH', '/api/settings', { currency: 'x'.repeat(13) })).status).toBe(400);
+
+    await call('POST', '/api/transactions', { type: 'expense', amount: 300, title: 'кофе', occurredAt: '2020-01-05T10:00:00Z' });
+    await call('POST', '/api/transactions', { type: 'income', amount: 1000, title: 'зп' });
+    expect((await call('PUT', '/api/balance', { balance: 5000 })).body).toEqual({ balance: 5000 });
+    expect((await call('GET', '/api/me')).body.balance).toBe(5000);
+
+    const all = (await call('GET', '/api/summary?period=all')).body;
+    expect(all).toMatchObject({ income: 1000, expense: 300 });
+    expect((await call('GET', '/api/transactions?period=all')).body.items).toHaveLength(2);
+
+    expect((await call('POST', '/api/export')).body).toEqual({ sent: true });
+    expect(sentDocs[0]!.chatId).toBe(77);
+    expect(sentDocs[0]!.file.toString('utf8')).toContain('"кофе"');
+
+    expect((await call('DELETE', '/api/transactions')).status).toBe(400);
+    expect((await call('DELETE', '/api/transactions?confirm=all')).status).toBe(204);
+    expect((await call('GET', '/api/transactions?period=all')).body.items).toHaveLength(0);
+    expect((await call('GET', '/api/me')).body.balance).toBe(0);
   });
 });

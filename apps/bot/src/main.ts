@@ -1,14 +1,16 @@
 import { fileURLToPath } from 'node:url';
-import { webhookCallback } from 'grammy';
+import { InputFile, webhookCallback } from 'grammy';
 import { buildApi } from '@mamoney/api';
 import { connect } from '@mamoney/db';
-import { openRouterCategorizer } from './ai.ts';
+import { llmCategorizer, resolveModels } from './ai.ts';
 import { createBot, setupBotProfile } from './bot.ts';
 import { config } from './config.ts';
 import { startScheduler } from './cron.ts';
 
 const { db, client } = connect();
-const ai = openRouterCategorizer(config.openrouterKey, config.openrouterModels);
+const aiModels = await resolveModels(config.aiBaseUrl, config.aiModels);
+const ai = llmCategorizer({ baseUrl: config.aiBaseUrl, apiKey: config.aiKey, models: aiModels });
+console.log(`AI-категоризация: ${ai ? aiModels.join(', ') : 'выключена'}`);
 const defaults = { timezone: config.defaultTimezone, currency: config.defaultCurrency };
 const bot = createBot({ db, token: config.botToken, ai, publicUrl: config.publicUrl, defaults });
 
@@ -26,6 +28,9 @@ const app = await buildApi({
   ai,
   staticDir: process.env.MINIAPP_DIR ?? fileURLToPath(new URL('../../miniapp/dist', import.meta.url)),
   logger: true,
+  sendDocument: async (chatId, file, filename) => {
+    await bot.api.sendDocument(chatId, new InputFile(file, filename));
+  },
 });
 
 const useWebhook = Boolean(base && config.webhookSecret);

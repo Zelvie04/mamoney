@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { api, type Category, type TxType } from '../api';
+import { currencyName } from '@mamoney/core/currency';
+import { api, type Category, type Planned as PlannedItem, type TxType } from '../api';
+import { CurrencyPicker } from '../components/Currency';
 import { ErrorBox, Loading, Segments, Sheet, Switch, catIcon, toast } from '../components/ui';
 import { useApp } from '../context';
 import { money } from '../format';
@@ -21,11 +23,43 @@ export function More() {
         <MenuItem icon="🗓" title="Планы" sub="Будущие траты и заметки" onClick={() => setPage('planned')} />
         <MenuItem icon="⚙️" title="Настройки" sub="Валюта, часовой пояс, отчёты" onClick={() => setPage('settings')} />
       </div>
-      <div className="section-title">В боте</div>
-      <div className="card sub" style={{ fontSize: 14 }}>
-        /export — выгрузка всех операций в CSV<br />
-        /clear — удалить всю историю<br />
-        Записывать траты можно прямо в чат: «350 кофе».
+      <Data />
+      <p className="sub" style={{ fontSize: 13, margin: '14px 4px' }}>
+        Всё можно делать здесь. Бот в чате остаётся для быстрых записей вроде «350 кофе» и присылает отчёты.
+      </p>
+    </>
+  );
+}
+
+function Data() {
+  const { refresh } = useApp();
+  const [busy, setBusy] = useState(false);
+  const exportCsv = async () => {
+    setBusy(true);
+    try {
+      await api.exportCsv();
+      haptic.ok();
+      toast('Файл отправлен в чат с ботом');
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const clear = async () => {
+    if (!(await confirm('Удалить все операции? Баланс обнулится. Категории, бюджеты и планы останутся.'))) return;
+    if (!(await confirm('Точно? Это нельзя отменить. Можно сначала выгрузить CSV.'))) return;
+    await api.clearHistory();
+    haptic.ok();
+    toast('История очищена');
+    refresh();
+  };
+  return (
+    <>
+      <div className="section-title">Данные</div>
+      <div className="list">
+        <MenuItem icon="📤" title="Выгрузить в CSV" sub={busy ? 'Отправляю…' : 'Файл придёт в чат с ботом, открывается в Excel'} onClick={exportCsv} />
+        <MenuItem icon="🗑" title="Очистить историю" sub="Удалить все операции" onClick={clear} />
       </div>
     </>
   );
@@ -124,6 +158,7 @@ function Planned({ back }: { back: () => void }) {
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState('');
+  const [edit, setEdit] = useState<PlannedItem | null>(null);
 
   const add = async () => {
     const a = Number(amount.replace(/\s/g, '').replace(',', '.'));
@@ -151,7 +186,7 @@ function Planned({ back }: { back: () => void }) {
             {list.data.map((p) => (
               <div key={p.id} className="item">
                 <button className="switch" aria-label="Выполнено" onClick={async () => (await api.updatePlanned(p.id, { done: true }), haptic.ok(), refresh())} style={{ width: 24, height: 24, borderRadius: 12 }} />
-                <div className="grow">
+                <div className="grow" role="button" onClick={() => setEdit(p)}>
                   <div>{p.title}</div>
                   {(p.amount || p.dueDate) && (
                     <div className="muted" style={{ fontSize: 13 }}>
@@ -175,15 +210,58 @@ function Planned({ back }: { back: () => void }) {
         <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Дата" />
       </div>
       <button className="btn" disabled={!title.trim()} onClick={add}>Добавить</button>
+      <PlannedSheet item={edit} onClose={() => setEdit(null)} />
     </>
   );
 }
 
-const CURRENCIES = ['RUB', 'BYN', 'KZT', 'UAH', 'USD', 'EUR'];
+function PlannedSheet({ item, onClose }: { item: PlannedItem | null; onClose: () => void }) {
+  const { refresh } = useApp();
+  const [title, setTitle] = useState('');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState('');
+  const [last, setLast] = useState<PlannedItem | null>(null);
+  if (item !== last) {
+    setLast(item);
+    setTitle(item?.title ?? '');
+    setAmount(item?.amount ? String(item.amount) : '');
+    setDate(item?.dueDate ?? '');
+  }
+  const a = Number(amount.replace(/\s/g, '').replace(',', '.'));
+  const done = (msg: string) => (haptic.ok(), toast(msg), refresh(), onClose());
+  const save = async () => {
+    await api.updatePlanned(item!.id, { title: title.trim(), amount: a > 0 ? a : null, dueDate: date || null });
+    done('Сохранено');
+  };
+  const record = async () => {
+    await api.addTx({ type: 'expense', amount: a, title: title.trim(), categoryId: null });
+    await api.updatePlanned(item!.id, { done: true });
+    done('Записано в расходы');
+  };
+  const remove = async () => {
+    await api.deletePlanned(item!.id);
+    done('Удалено');
+  };
+  return (
+    <Sheet open={!!item} onClose={onClose}>
+      <div className="title">План</div>
+      <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
+      <div className="row" style={{ marginTop: 8 }}>
+        <input className="input" inputMode="decimal" placeholder="Сумма" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.,\s]/g, ''))} />
+        <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Дата" />
+      </div>
+      <button className="btn" disabled={!title.trim()} onClick={save}>Сохранить</button>
+      {a > 0 && <button className="btn ghost" disabled={!title.trim()} onClick={record}>Потратил — записать в расходы</button>}
+      <button className="btn danger" onClick={remove}>Удалить</button>
+    </Sheet>
+  );
+}
+
 const TIMEZONES = ['Europe/Kaliningrad', 'Europe/Moscow', 'Europe/Minsk', 'Europe/Samara', 'Asia/Yekaterinburg', 'Asia/Omsk', 'Asia/Novosibirsk', 'Asia/Krasnoyarsk', 'Asia/Irkutsk', 'Asia/Yakutsk', 'Asia/Vladivostok', 'Asia/Almaty', 'Europe/Kyiv'];
 
 function Settings({ back }: { back: () => void }) {
   const { me, refresh } = useApp();
+  const [cur, setCur] = useState(false);
   if (!me) return <Loading />;
   const s = me.user.settings;
   const save = async (patch: Parameters<typeof api.settings>[0]) => {
@@ -196,12 +274,10 @@ function Settings({ back }: { back: () => void }) {
       <Back back={back} title="Настройки" />
       <div className="section-title">Основное</div>
       <div className="list">
-        <label className="toggle">
+        <button className="toggle" onClick={() => setCur(true)}>
           <span>Валюта</span>
-          <select className="chip" value={me.user.currency} onChange={(e) => save({ currency: e.target.value })}>
-            {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </label>
+          <span className="chip">{currencyName(me.user.currency)}</span>
+        </button>
         <label className="toggle">
           <span>Часовой пояс</span>
           <select className="chip" value={me.user.timezone} onChange={(e) => save({ timezone: e.target.value })}>
@@ -224,6 +300,9 @@ function Settings({ back }: { back: () => void }) {
       <div className="list">
         <div className="toggle"><span>Удалять мои сообщения после записи</span><Switch label="Чистый чат" on={s.cleanChat !== false} onChange={(v) => save({ cleanChat: v })} /></div>
       </div>
+      <Sheet open={cur} onClose={() => setCur(false)}>
+        <CurrencyPicker current={me.user.currency} onSaved={() => (setCur(false), refresh())} />
+      </Sheet>
     </>
   );
 }

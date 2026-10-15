@@ -32,6 +32,8 @@ export interface UserSettings {
   reportHour?: number;
   dailyReminder?: boolean;
   cleanChat?: boolean;
+  /** Пользователь сам выбрал валюту (при первом входе спрашиваем) */
+  currencyChosen?: boolean;
 }
 
 export const accounts = pgTable('accounts', {

@@ -18,7 +18,9 @@ import {
   deleteBudget,
   deletePlanned,
   deleteTransaction,
+  clearHistory,
   ensureUser,
+  exportCsv,
   getBalance,
   listCategories,
   listPlanned,
@@ -26,6 +28,8 @@ import {
   monthlySeries,
   rememberRule,
   resolveCategory,
+  setBalance,
+  setCurrency,
   totals,
   updateCategory,
   updatePlanned,
@@ -44,6 +48,8 @@ export interface ApiOptions {
   /** Папка со сборкой Mini App (apps/miniapp/dist), раздаётся по /app/ */
   staticDir?: string;
   logger?: boolean;
+  /** Отправка файла пользователю в чат с ботом (выгрузка CSV из Mini App) */
+  sendDocument?: (chatId: number, file: Buffer, filename: string) => Promise<void>;
 }
 
 declare module 'fastify' {
@@ -89,13 +95,15 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       req.user = (await ensureUser(db, tg, opts.defaults)).user;
     });
 
-    const tzRange = (u: User, q: { from?: Date; to?: Date; period?: string }) => {
+    type PeriodQ = 'week' | 'month' | 'prev_week' | 'prev_month' | 'all';
+    const periodToRange = (p: PeriodQ, tz: string) =>
+      p === 'all' ? { start: new Date(0), end: new Date(Date.now() + 86400_000) } : periodRange(p, tz);
+    const tzRange = (u: User, q: { from?: Date; to?: Date; period?: PeriodQ }) => {
       if (q.from || q.to) return { start: q.from ?? new Date(0), end: q.to ?? new Date() };
-      const p = (q.period ?? 'month') as 'week' | 'month' | 'prev_week' | 'prev_month';
-      return periodRange(p, u.timezone);
+      return periodToRange(q.period ?? 'month', u.timezone);
     };
     const rangeQuery = z.object({
-      period: z.enum(['week', 'month', 'prev_week', 'prev_month']).optional(),
+      period: z.enum(['week', 'month', 'prev_week', 'prev_month', 'all']).optional(),
       from: z.coerce.date().optional(),
       to: z.coerce.date().optional(),
     });
@@ -111,7 +119,7 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
     api.patch('/settings', async (req) => {
       const b = z
         .object({
-          currency: z.string().length(3).toUpperCase().optional(),
+          currency: z.string().max(12).optional(),
           timezone: z.string().refine((tz) => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } }).optional(),
           weeklyReport: z.boolean().optional(),
           monthlyReport: z.boolean().optional(),
@@ -120,10 +128,10 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
         })
         .parse(req.body);
       const { currency, timezone, ...settings } = b;
+      if (currency !== undefined) await setCurrency(db, req.user.id, currency);
       const [u] = await db
         .update(users)
         .set({
-          ...(currency ? { currency } : {}),
           ...(timezone ? { timezone } : {}),
           settings: sql`${users.settings} || ${JSON.stringify(settings)}::jsonb`,
         })
@@ -141,7 +149,9 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
         dailySeries(db, u.id, start, end, u.timezone),
         budgetProgress(db, u.id, u.timezone),
       ]);
-      const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400_000));
+      const first = daily.find((d) => d.income || d.expense)?.day;
+      const from = first && start.getTime() === 0 ? new Date(`${first}T00:00:00Z`) : start;
+      const days = Math.max(1, Math.ceil((Math.min(end.getTime(), Date.now()) - from.getTime()) / 86400_000));
       return {
         from: start, to: end,
         balance: await getBalance(db, u.id),
@@ -156,7 +166,25 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       return monthlySeries(db, req.user.id, months, req.user.timezone);
     });
 
+    api.put('/balance', async (req) => {
+      const { balance } = z.object({ balance: z.coerce.number().min(-1e11).max(1e11) }).parse(req.body);
+      await setBalance(db, req.user.id, await defaultAccountId(db, req.user.id), balance);
+      return { balance: await getBalance(db, req.user.id) };
+    });
+
+    api.post('/export', async (req, reply) => {
+      if (!opts.sendDocument) return reply.code(501).send({ error: 'not_available' });
+      await opts.sendDocument(req.user.tgId, await exportCsv(db, req.user.id), 'mamoney.csv');
+      return { sent: true };
+    });
+
     // ----- Операции -----
+    api.delete('/transactions', async (req, reply) => {
+      z.object({ confirm: z.literal('all') }).parse(req.query);
+      await clearHistory(db, req.user.id);
+      return reply.code(204).send();
+    });
+
     api.get('/transactions', async (req) => {
       const q = rangeQuery
         .extend({
@@ -168,7 +196,7 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
         })
         .parse(req.query);
       const before = q.cursor ? { occurredAt: new Date(Number(q.cursor.split(':')[0])), id: Number(q.cursor.split(':')[1]) } : undefined;
-      const range = q.period ? periodRange(q.period, req.user.timezone) : null;
+      const range = q.period ? periodToRange(q.period, req.user.timezone) : null;
       const rows = await listTransactions(db, req.user.id, { ...q, from: range?.start ?? q.from, to: range?.end ?? q.to, before });
       const lastRow = rows.at(-1);
       return {

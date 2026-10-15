@@ -16,9 +16,9 @@ export interface Me {
   user: { id: number; firstName: string | null; username: string | null; currency: string; timezone: string; settings: Settings };
   balance: number;
 }
-export interface Settings { weeklyReport?: boolean; monthlyReport?: boolean; reportHour?: number; cleanChat?: boolean }
+export interface Settings { weeklyReport?: boolean; monthlyReport?: boolean; reportHour?: number; cleanChat?: boolean; currencyChosen?: boolean }
 export interface Planned { id: number; title: string; amount: number | null; dueDate: string | null; done: boolean }
-export type Period = 'week' | 'month' | 'prev_week' | 'prev_month';
+export type Period = 'week' | 'month' | 'prev_week' | 'prev_month' | 'all';
 
 const initData = tg?.initData || import.meta.env.VITE_DEV_INIT_DATA || '';
 
@@ -42,6 +42,9 @@ const qs = (o: Record<string, unknown>) =>
 export const api = {
   me: () => req<Me>('GET', '/me'),
   settings: (s: Partial<Settings & { currency: string; timezone: string }>) => req<unknown>('PATCH', '/settings', s),
+  setBalance: (balance: number) => req<{ balance: number }>('PUT', '/balance', { balance }),
+  exportCsv: () => req<{ sent: boolean }>('POST', '/export'),
+  clearHistory: () => req<void>('DELETE', '/transactions?confirm=all'),
   summary: (period: Period) => req<Summary>('GET', `/summary${qs({ period })}`),
   monthly: (months = 12) => req<{ month: string; income: number; expense: number }[]>('GET', `/analytics/monthly${qs({ months })}`),
   transactions: (f: { period?: Period; type?: TxType; categoryId?: number; q?: string; cursor?: string | null; limit?: number }) =>

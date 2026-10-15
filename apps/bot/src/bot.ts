@@ -2,7 +2,10 @@ import { Bot, type Context, InlineKeyboard, InputFile } from 'grammy';
 import type { UserFromGetMe } from 'grammy/types';
 import {
   type Period,
+  CURRENCY_PRESETS,
+  DEFAULT_CURRENCY,
   buildReport,
+  currencyName,
   formatMoney,
   formatReport,
   parseMessage,
@@ -31,7 +34,7 @@ import {
   totals,
   updateTransaction,
 } from '@mamoney/domain';
-import { type User, defaultAccountId, ensureUser, getState, markBlocked, setState } from '@mamoney/domain';
+import { type User, defaultAccountId, ensureUser, exportCsv, getState, markBlocked, setCurrency, setState } from '@mamoney/domain';
 import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
 
 export interface BotDeps {
@@ -87,12 +90,32 @@ export function createBot(deps: BotDeps) {
     await ctx.deleteMessage().catch(() => {});
   };
 
+  const currencyKb = () => {
+    const kb = new InlineKeyboard();
+    CURRENCY_PRESETS.forEach((c, i) => {
+      kb.text(c.code, `cur:${c.code}`);
+      if (i % 5 === 4) kb.row();
+    });
+    return kb.row().text(`«${DEFAULT_CURRENCY}»`, 'cur:-').text('Без валюты', 'cur:0').row().text('Своя…', 'cur:?');
+  };
+  const askCurrency = (ctx: Ctx) =>
+    ctx.reply(
+      `Какую валюту показывать? Сейчас: <b>${esc(currencyName(ctx.user.currency))}</b>.\nМожно выбрать из списка, написать свою или оставить без подписи. Поменять потом — /currency или в приложении.`,
+      { parse_mode: 'HTML', reply_markup: currencyKb() },
+    );
+
   bot.command('start', async (ctx) => {
     const kb = appUrl ? new InlineKeyboard().webApp('Открыть приложение', appUrl) : undefined;
     await ctx.reply(
-      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\n${HELP}`,
+      `Привет! Это MaMoney — учёт доходов и расходов прямо в Telegram.\n\nВсё можно делать в приложении (кнопка ниже), а можно просто писать сюда.\n\n${HELP}`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
+    if (!ctx.user.settings.currencyChosen) await askCurrency(ctx);
+  });
+
+  bot.command('currency', async (ctx) => {
+    await askCurrency(ctx);
+    await tidy(ctx);
   });
 
   bot.command(['commands', 'help'], (ctx) => ctx.reply(COMMANDS));
@@ -187,15 +210,7 @@ export function createBot(deps: BotDeps) {
   });
 
   bot.command('export', async (ctx) => {
-    const rows = await recentTransactions(db, ctx.user.id, 100_000);
-    const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    const csv = [
-      'date;type;amount;currency;category;title',
-      ...rows.reverse().map(({ tx, category }) =>
-        [tx.occurredAt.toISOString(), tx.type, tx.amount.toFixed(2).replace('.', ','), tx.currency, q(category ?? ''), q(tx.title)].join(';'),
-      ),
-    ].join('\n');
-    await ctx.replyWithDocument(new InputFile(Buffer.from('﻿' + csv, 'utf8'), 'mamoney.csv'));
+    await ctx.replyWithDocument(new InputFile(await exportCsv(db, ctx.user.id), 'mamoney.csv'));
   });
 
   // ----- Кнопки -----
@@ -203,6 +218,18 @@ export function createBot(deps: BotDeps) {
     await setState(db, ctx.user.id, 'idle');
     await ctx.answerCallbackQuery('Отменено');
     await ctx.deleteMessage().catch(() => {});
+  });
+
+  bot.callbackQuery(/^cur:(.+)$/, async (ctx) => {
+    const v = ctx.match[1]!;
+    if (v === '?') {
+      await setState(db, ctx.user.id, 'currency');
+      await ctx.answerCallbackQuery();
+      return ctx.editMessageText('Напиши, как подписывать суммы: код (GBP), символ (₿) или слово (баллов). До 12 символов.', { reply_markup: cancelKb });
+    }
+    const u = await setCurrency(db, ctx.user.id, v === '-' ? DEFAULT_CURRENCY : v === '0' ? '' : v);
+    await ctx.answerCallbackQuery('Сохранено');
+    await ctx.editMessageText(`Валюта: ${esc(currencyName(u.currency))}. Например: ${money(u, 1500)}`).catch(() => {});
   });
 
   bot.callbackQuery('clear:yes', async (ctx) => {
@@ -255,8 +282,15 @@ export function createBot(deps: BotDeps) {
     if (text.startsWith('/')) return ctx.reply('Не знаю такой команды. Список: /commands');
     const { state } = await getState(db, ctx.user.id);
 
+    if (state === 'currency') {
+      const u = await setCurrency(db, ctx.user.id, text);
+      await setState(db, ctx.user.id, 'idle');
+      await ctx.reply(`Валюта: ${esc(currencyName(u.currency))}. Например: ${money(u, 1500)}`);
+      return tidy(ctx);
+    }
+
     if (state === 'balance') {
-      const v = Number(text.replace(/[\s ]/g, '').replace(',', '.').replace(/[₽р]$/i, ''));
+      const v = Number(text.replace(/[\s ]/g, '').replace(',', '.').replace(/[^\d.-]+$/, ''));
       if (!Number.isFinite(v)) return ctx.reply('Пришли просто число, например 15000 или -200,50', { reply_markup: cancelKb });
       await setBalance(db, ctx.user.id, await defaultAccountId(db, ctx.user.id), v);
       await setState(db, ctx.user.id, 'idle');

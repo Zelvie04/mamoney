@@ -1,5 +1,5 @@
-import { and, eq } from 'drizzle-orm';
-import { DEFAULT_EMOJI, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_INCOME_CATEGORIES } from '@mamoney/core';
+import { and, eq, sql } from 'drizzle-orm';
+import { DEFAULT_EMOJI, normalizeCurrency, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_INCOME_CATEGORIES } from '@mamoney/core';
 import { accounts, botState, categories, users, type Db } from '@mamoney/db';
 
 export interface TgUser { id: number; username?: string; first_name?: string; last_name?: string; language_code?: string }
@@ -50,6 +50,20 @@ export async function ensureUser(db: Db, tg: TgUser, defaults: UserDefaults): Pr
   });
 }
 
+/** Меняет подпись валюты (суммы не пересчитываются) и отмечает, что выбор сделан. */
+export async function setCurrency(db: Db, userId: number, input: string): Promise<User> {
+  const currency = normalizeCurrency(input);
+  return db.transaction(async (tx) => {
+    const [u] = await tx
+      .update(users)
+      .set({ currency, settings: sql`${users.settings} || '{"currencyChosen": true}'::jsonb` })
+      .where(eq(users.id, userId))
+      .returning();
+    await tx.update(accounts).set({ currency }).where(eq(accounts.userId, userId));
+    return u!;
+  });
+}
+
 export async function defaultAccountId(db: Db, userId: number): Promise<number> {
   const [a] = await db.select({ id: accounts.id }).from(accounts).where(and(eq(accounts.userId, userId), eq(accounts.isDefault, true)));
   if (a) return a.id;
@@ -57,7 +71,7 @@ export async function defaultAccountId(db: Db, userId: number): Promise<number> 
   return created!.id;
 }
 
-export type BotStateName = 'idle' | 'balance' | 'category' | 'planned';
+export type BotStateName = 'idle' | 'balance' | 'category' | 'planned' | 'currency';
 
 export async function getState(db: Db, userId: number): Promise<{ state: BotStateName; payload: Record<string, unknown> }> {
   const [s] = await db.select().from(botState).where(eq(botState.userId, userId));

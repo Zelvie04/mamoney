@@ -34,6 +34,6 @@ await upsertBudget(db, user.id, { categoryId: cat('развлечения'), per
 await addPlanned(db, user.id, 'ремонт машины', { amount: 25000, dueDate: '2026-11-20' });
 await addPlanned(db, user.id, 'подарок маме');
 
-const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' }, staticDir: fileURLToPath(new URL('../../miniapp/dist', import.meta.url)) });
+const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' }, sendDocument: async () => {}, staticDir: fileURLToPath(new URL('../../miniapp/dist', import.meta.url)) });
 await app.listen({ port: 3999 });
 console.log('INIT_DATA=' + signInitData({ id: 1, first_name: 'Зелв' }, TOKEN));

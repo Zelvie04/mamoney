@@ -116,3 +116,30 @@ describe('бюджеты в боте', () => {
     expect(plain(t.last())).toContain('превышен');
   });
 });
+
+describe('валюта в боте', () => {
+  it('при первом /start спрашивает валюту, выбор из списка и своя', async () => {
+    const t = await testBot();
+    await t.text('/start');
+    expect(t.last()).toContain('Какую валюту показывать');
+    expect(JSON.stringify(t.calls.at(-1)!.payload.reply_markup)).toContain('cur:BYN');
+
+    await t.press('cur:BYN');
+    const edit = t.calls.find((c) => c.method === 'editMessageText')!;
+    expect(plain(edit.payload.text)).toContain('Белорусский рубль');
+
+    t.reset();
+    await t.text('/start');
+    expect(t.sent().some((s) => s.includes('Какую валюту'))).toBe(false);
+
+    await t.press('cur:?');
+    await t.text('баллов');
+    expect(plain(t.last())).toContain('1 500 баллов');
+    await t.text('200 кофе');
+    expect(plain(t.last())).toContain('Расход: 200 баллов');
+
+    await t.press('cur:0');
+    await t.text('100 чай');
+    expect(plain(t.last())).toContain('Расход: 100 чай');
+  });
+});

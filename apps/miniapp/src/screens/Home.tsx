@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { api, type Period } from '../api';
 import { BarList } from '../components/BarList';
 import { TxItem } from '../components/TxList';
-import { ErrorBox, Loading, Segments } from '../components/ui';
+import { ErrorBox, Loading, Segments, Sheet, toast } from '../components/ui';
 import { useApp } from '../context';
 import { money } from '../format';
 import { useLoad } from '../hooks';
+import { haptic } from '../tg';
 import { BudgetBar } from './Budgets';
 
 export function Home({ go }: { go: (tab: 'tx' | 'budgets') => void }) {
@@ -13,6 +14,7 @@ export function Home({ go }: { go: (tab: 'tx' | 'budgets') => void }) {
   const [period, setPeriod] = useState<Period>('month');
   const s = useLoad(() => api.summary(period), [period, version]);
   const recent = useLoad(() => api.transactions({ limit: 5 }), [version]);
+  const [editBalance, setEditBalance] = useState(false);
 
   if (s.error) return <ErrorBox error={s.error} retry={s.reload} />;
   if (!s.data) return <Loading />;
@@ -22,9 +24,13 @@ export function Home({ go }: { go: (tab: 'tx' | 'budgets') => void }) {
   return (
     <>
       <div className="card hero">
-        <div className="label">{me?.user.firstName ? `${me.user.firstName}, твой баланс` : 'Баланс'}</div>
-        <div className="value num">{money(d.balance)}</div>
+        <button className="balance-btn" onClick={() => (haptic.tap(), setEditBalance(true))} aria-label="Изменить баланс">
+          <div className="label">{me?.user.firstName ? `${me.user.firstName}, твой баланс` : 'Баланс'}</div>
+          <div className="value num">{money(d.balance)}</div>
+          <div className="edit">Изменить</div>
+        </button>
       </div>
+      <BalanceSheet open={editBalance} current={d.balance} onClose={() => setEditBalance(false)} />
 
       <div style={{ marginTop: 10 }}>
         <Segments value={period} onChange={setPeriod} options={[{ id: 'week', label: 'Эта неделя' }, { id: 'month', label: 'Этот месяц' }] as const} />
@@ -83,5 +89,37 @@ export function Home({ go }: { go: (tab: 'tx' | 'budgets') => void }) {
         <div className="card empty">Пока пусто. Нажми «+» или напиши боту «350 кофе».</div>
       )}
     </>
+  );
+}
+
+/** Ручная корректировка баланса: операции не меняются, сдвигается начальный остаток счёта */
+function BalanceSheet({ open, current, onClose }: { open: boolean; current: number; onClose: () => void }) {
+  const { refresh } = useApp();
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const num = Number(value.replace(/\s/g, '').replace(',', '.'));
+  const ok = value.trim() !== '' && Number.isFinite(num);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.setBalance(num);
+      haptic.ok();
+      toast('Баланс обновлён');
+      setValue('');
+      refresh();
+      onClose();
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Sheet open={open} onClose={onClose}>
+      <div className="title">Баланс</div>
+      <p className="sub" style={{ marginTop: -4 }}>Сейчас {money(current)}. Укажи, сколько денег на самом деле, и баланс подстроится. История операций не изменится.</p>
+      <input className="input" inputMode="decimal" autoFocus placeholder={String(current)} value={value} onChange={(e) => setValue(e.target.value.replace(/[^\d.,\s-]/g, ''))} />
+      <button className="btn" disabled={!ok || busy} onClick={save}>Сохранить</button>
+    </Sheet>
   );
 }

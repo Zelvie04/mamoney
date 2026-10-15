@@ -12,7 +12,10 @@ export function Analytics() {
   const [period, setPeriod] = useState<Period>('month');
   const [table, setTable] = useState(false);
   const s = useLoad(() => api.summary(period), [period, version]);
-  const prev = useLoad(() => api.summary(period === 'month' ? 'prev_month' : period === 'week' ? 'prev_week' : period), [period, version]);
+  const prev = useLoad(
+    () => (period === 'month' || period === 'week' ? api.summary(period === 'month' ? 'prev_month' : 'prev_week') : Promise.resolve(null)),
+    [period, version],
+  );
   const m = useLoad(() => api.monthly(12), [version]);
 
   return (
@@ -38,9 +41,9 @@ export function Analytics() {
             </div>
           </div>
 
-          <div className="section-title">Расходы по дням</div>
+          <div className="section-title">{period === 'all' ? 'Расходы по месяцам' : 'Расходы по дням'}</div>
           <div className="card">
-            {s.data.daily.some((d) => d.expense > 0) ? <DailyChart data={fillDays(s.data.daily)} /> : <div className="empty">Нет расходов за период</div>}
+            {!s.data.daily.some((d) => d.expense > 0) ? <div className="empty">Нет расходов за период</div> : period === 'all' ? <MonthlyChart data={byMonth(s.data.daily)} /> : <DailyChart data={fillDays(s.data.daily)} />}
           </div>
 
           <div className="section-title">Расходы по категориям</div>
@@ -55,6 +58,7 @@ export function Analytics() {
         </>
       )}
 
+      {period !== 'all' && (<>
       <div className="section-title row spread">
         <span>12 месяцев</span>
         <button className="chip" onClick={() => setTable(!table)}>{table ? 'График' : 'Таблица'}</button>
@@ -82,6 +86,7 @@ export function Analytics() {
           <MonthlyChart data={m.data} />
         )}
       </div>
+      </>)}
     </>
   );
 }
@@ -108,4 +113,16 @@ function fillDays(daily: { day: string; income: number; expense: number }[]) {
     out.push(map.get(key) ?? { day: key, income: 0, expense: 0 });
   }
   return out;
+}
+
+function byMonth(daily: { day: string; income: number; expense: number }[]) {
+  const m = new Map<string, { month: string; income: number; expense: number }>();
+  for (const d of daily) {
+    const k = d.day.slice(0, 7);
+    const r = m.get(k) ?? { month: k, income: 0, expense: 0 };
+    r.income += d.income;
+    r.expense += d.expense;
+    m.set(k, r);
+  }
+  return [...m.values()];
 }

@@ -119,3 +119,16 @@ export async function listTransactions(db: Db, userId: number, f: TxFilter = {})
     .orderBy(desc(transactions.occurredAt), desc(transactions.id))
     .limit(Math.min(f.limit ?? 50, 200));
 }
+
+/** CSV для Excel (UTF-8 с BOM, разделитель «;»), от старых к новым. */
+export async function exportCsv(db: Db, userId: number): Promise<Buffer> {
+  const rows = await recentTransactions(db, userId, 1_000_000);
+  const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  const csv = [
+    'date;type;amount;currency;category;title',
+    ...rows.reverse().map(({ tx, category }) =>
+      [tx.occurredAt.toISOString(), tx.type, tx.amount.toFixed(2).replace('.', ','), q(tx.currency), q(category ?? ''), q(tx.title)].join(';'),
+    ),
+  ].join('\n');
+  return Buffer.from('\uFEFF' + csv, 'utf8');
+}
