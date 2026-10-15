@@ -8,12 +8,14 @@ import { money } from '../format';
 import { useLoad } from '../hooks';
 import { haptic } from '../tg';
 import { BudgetBar } from './Budgets';
+import { PlannedRow, plannedTotal } from '../components/PlannedList';
 
-export function Home({ go }: { go: (tab: 'tx' | 'budgets') => void }) {
+export function Home({ go }: { go: (tab: 'tx' | 'budgets' | 'planned') => void }) {
   const { version, me, categories } = useApp();
   const [period, setPeriod] = useState<Period>('month');
   const s = useLoad(() => api.summary(period), [period, version]);
   const recent = useLoad(() => api.transactions({ limit: 5 }), [version]);
+  const planned = useLoad(() => api.planned(), [version]);
   const [editBalance, setEditBalance] = useState(false);
 
   if (s.error) return <ErrorBox error={s.error} retry={s.reload} />;
@@ -72,6 +74,26 @@ export function Home({ go }: { go: (tab: 'tx' | 'budgets') => void }) {
             ))}
           </div>
         </>
+      )}
+
+      <div className="section-title row spread">
+        <span>Будущие траты</span>
+        <button className="chip" onClick={() => go('planned')}>{planned.data?.length ? 'Все' : 'Добавить'}</button>
+      </div>
+      {planned.data?.length ? (
+        <>
+          <div className="list">
+            {planned.data.slice(0, 4).map((p) => <PlannedRow key={p.id} p={p} onClick={() => go('planned')} />)}
+          </div>
+          {plannedTotal(planned.data) > 0 && (
+            <div className="muted" style={{ margin: '8px 4px', fontSize: 14 }}>
+              Всего запланировано {money(plannedTotal(planned.data))}
+              {planned.data.length > 4 ? ` · ещё ${planned.data.length - 4}` : ''}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="card empty" style={{ padding: '18px 16px' }}>Здесь появятся траты с будущей датой. Выбери дату позже сегодняшней при добавлении.</div>
       )}
 
       <div className="section-title">Куда ушли деньги</div>

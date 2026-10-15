@@ -22,7 +22,7 @@ function useColors() {
 const short = (v: number) => (v >= 1e6 ? `${(v / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} млн` : v >= 1000 ? `${Math.round(v / 1000)}к` : String(v));
 
 
-function Tip({ active, payload, label, fmtLabel }: any) {
+function Tip({ active, payload, label, fmtLabel, fmtValue = money }: any) {
   if (!active || !payload?.length) return null;
   return (
     <div className="tooltip">
@@ -30,7 +30,7 @@ function Tip({ active, payload, label, fmtLabel }: any) {
       {payload.map((p: any) => (
         <div key={p.dataKey} className="num">
           <span className="dot" style={{ background: p.color }} />
-          {p.name}: {money(p.value)}
+          {p.name}: {fmtValue(p.value)}
         </div>
       ))}
     </div>
@@ -82,5 +82,24 @@ export function MonthlyChart({ data }: { data: { month: string; income: number; 
         </ResponsiveContainer>
       </div>
     </>
+  );
+}
+
+/** Счётчики по дням (люди, операции): одна серия, название — в заголовке карточки */
+export function CountChart({ data, dataKey, name, color = 'income' }: { data: Record<string, unknown>[]; dataKey: string; name: string; color?: 'income' | 'expense' }) {
+  const c = useColors();
+  const axis = { stroke: c.axis, fontSize: 12, tickLine: false, axisLine: false } as const;
+  return (
+    <div className="chart" role="img" aria-label={name}>
+      <ResponsiveContainer>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }} barCategoryGap={2}>
+          <CartesianGrid vertical={false} stroke={c.grid} />
+          <XAxis dataKey="day" tickFormatter={shortDay} {...axis} minTickGap={8} />
+          <YAxis {...axis} width={28} allowDecimals={false} />
+          <Tooltip cursor={{ fill: c.track }} content={<Tip fmtLabel={longDay} fmtValue={(v: number) => v.toLocaleString('ru-RU')} />} />
+          <Bar dataKey={dataKey} name={name} fill={c[color]} isAnimationActive={false} radius={[4, 4, 0, 0]} maxBarSize={22} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

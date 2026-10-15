@@ -4,7 +4,8 @@ import { useApp } from '../context';
 import { haptic } from '../tg';
 import { Segments, Sheet, catIcon, toast } from './ui';
 
-const today = () => new Date().toISOString().slice(0, 10);
+/** Сегодня по часам телефона (toISOString дал бы дату по UTC и ошибся бы ночью) */
+const today = () => new Date().toLocaleDateString('en-CA');
 
 /** Режим добавления запоминается: как выбрал в прошлый раз, по умолчанию — форма */
 type Mode = 'quick' | 'form';
@@ -46,7 +47,7 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
       setAmount(String(tx.amount));
       setTitle(tx.title);
       setCategoryId(tx.categoryId);
-      setDate(tx.occurredAt.slice(0, 10));
+      setDate(new Date(tx.occurredAt).toLocaleDateString('en-CA'));
       setNote(tx.note ?? '');
     } else {
       setModeState(savedMode());
@@ -63,6 +64,7 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
   const cats = categories.filter((c) => c.type === type && !c.archived);
   const amountNum = Number(amount.replace(/\s/g, '').replace(',', '.'));
   const formOk = amountNum > 0 && title.trim().length > 0;
+  const future = !tx && date > today();
 
   const done = (msg: string) => {
     haptic.ok();
@@ -75,13 +77,18 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
     setBusy(true);
     try {
       const r = await api.quick(text);
-      if (!r.created.length) {
+      const plannedN = r.planned?.length ?? 0;
+      if (!r.created.length && !plannedN) {
         haptic.err();
         toast('Не понял. Пример: 350 кофе');
         return;
       }
       const skipped = r.errors.length ? `, пропущено строк: ${r.errors.length}` : '';
-      done(r.created.length === 1 ? `Записано: ${r.created[0]!.title}` : `Записано операций: ${r.created.length}${skipped}`);
+      const parts = [
+        r.created.length === 1 ? `Записано: ${r.created[0]!.title}` : r.created.length ? `Записано операций: ${r.created.length}` : '',
+        plannedN ? `в будущие траты: ${plannedN}` : '',
+      ].filter(Boolean);
+      done(parts.join(', ') + skipped);
     } catch (e) {
       toast((e as Error).message);
     } finally {
@@ -92,12 +99,15 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
   const submitForm = async () => {
     setBusy(true);
     // Если дата не менялась — сохраняем время; иначе полдень выбранного дня
-    const keepTime = tx && tx.occurredAt.slice(0, 10) === date;
+    const keepTime = tx && new Date(tx.occurredAt).toLocaleDateString('en-CA') === date;
     const occurredAt = keepTime ? undefined : date === today() && !tx ? undefined : new Date(`${date}T12:00:00`).toISOString();
     const body = { type, amount: amountNum, title: title.trim(), categoryId, note: note.trim() || null, ...(occurredAt ? { occurredAt } : {}) };
     try {
       if (tx) await api.updateTx(tx.id, body);
-      else await api.addTx(body);
+      else {
+        const r = await api.addTx(body);
+        if ('planned' in r) return done('Добавлено в будущие траты');
+      }
       done(tx ? 'Сохранено' : 'Записано');
     } catch (e) {
       toast((e as Error).message);
@@ -181,15 +191,16 @@ export function TxSheet({ open, tx, onClose }: { open: boolean; tx: Tx | null; o
           <div className="row" style={{ gap: 10 }}>
             <label className="field grow">
               <span>Дата</span>
-              <input className="input" type="date" value={date} max={today()} onChange={(e) => setDate(e.target.value)} />
+              <input className="input" type="date" value={date} max={tx ? today() : undefined} onChange={(e) => setDate(e.target.value || today())} />
             </label>
           </div>
+          {future && <div className="hint-box">🗓 Дата ещё не наступила — запись попадёт в будущие траты и не изменит баланс.</div>}
           <label className="field">
             <span>Заметка</span>
             <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="необязательно" />
           </label>
           <button className="btn" disabled={busy || !formOk} onClick={submitForm}>
-            {tx ? 'Сохранить' : 'Записать'}
+            {tx ? 'Сохранить' : future ? 'Запланировать' : 'Записать'}
           </button>
           {tx && (
             <button className="btn danger" disabled={busy} onClick={remove}>

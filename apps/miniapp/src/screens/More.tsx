@@ -6,12 +6,16 @@ import { ErrorBox, Loading, Segments, Sheet, Switch, catIcon, toast } from '../c
 import { useApp } from '../context';
 import { money } from '../format';
 import { useLoad } from '../hooks';
+import { PlannedRow, plannedTotal } from '../components/PlannedList';
+import { Stats } from './Stats';
 import { confirm, haptic } from '../tg';
 
-type Page = 'menu' | 'categories' | 'planned' | 'settings';
+type Page = 'menu' | 'categories' | 'planned' | 'settings' | 'stats';
 
-export function More() {
-  const [page, setPage] = useState<Page>('menu');
+export function More({ initial = 'menu' }: { initial?: Page }) {
+  const { me } = useApp();
+  const [page, setPage] = useState<Page>(initial);
+  if (page === 'stats') return <Stats back={() => setPage('menu')} />;
   if (page === 'categories') return <Categories back={() => setPage('menu')} />;
   if (page === 'planned') return <Planned back={() => setPage('menu')} />;
   if (page === 'settings') return <Settings back={() => setPage('menu')} />;
@@ -20,8 +24,9 @@ export function More() {
       <div className="title">Ещё</div>
       <div className="list">
         <MenuItem icon="🏷" title="Категории" sub="Добавить, переименовать, эмодзи" onClick={() => setPage('categories')} />
-        <MenuItem icon="🗓" title="Планы" sub="Будущие траты и заметки" onClick={() => setPage('planned')} />
+        <MenuItem icon="🗓" title="Будущие траты" sub="Планы с датой и без" onClick={() => setPage('planned')} />
         <MenuItem icon="⚙️" title="Настройки" sub="Валюта, часовой пояс, отчёты" onClick={() => setPage('settings')} />
+        {me?.isAdmin && <MenuItem icon="📊" title="Статистика" sub="Только для тебя: общие цифры по боту" onClick={() => setPage('stats')} />}
       </div>
       <Data />
       <p className="sub" style={{ fontSize: 13, margin: '14px 4px' }}>
@@ -160,55 +165,58 @@ function Planned({ back }: { back: () => void }) {
   const [date, setDate] = useState('');
   const [edit, setEdit] = useState<PlannedItem | null>(null);
 
+  const [type, setType] = useState<TxType>('expense');
+
   const add = async () => {
     const a = Number(amount.replace(/\s/g, '').replace(',', '.'));
-    await api.addPlanned({ title: title.trim(), amount: a > 0 ? a : null, dueDate: date || null });
+    await api.addPlanned({ title: title.trim(), amount: a > 0 ? a : null, dueDate: date || null, type });
     setTitle('');
     setAmount('');
     setDate('');
     haptic.ok();
+    toast('Добавлено');
     refresh();
   };
 
-  const total = (list.data ?? []).reduce((s, p) => s + (p.amount ?? 0), 0);
+  const total = plannedTotal(list.data ?? []);
 
   return (
     <>
-      <Back back={back} title="Планы" />
+      <Back back={back} title="Будущие траты" />
       {list.error && <ErrorBox error={list.error} />}
       {!list.data ? (
         <Loading />
       ) : list.data.length === 0 ? (
-        <div className="card empty">Здесь будут будущие траты. Их же бот присылает вместе с недельным отчётом.</div>
+        <div className="card empty">Пока пусто. Добавь ниже или при новой записи выбери дату позже сегодняшней. Бот присылает этот список вместе с недельным отчётом.</div>
       ) : (
         <>
           <div className="list">
             {list.data.map((p) => (
-              <div key={p.id} className="item">
-                <button className="switch" aria-label="Выполнено" onClick={async () => (await api.updatePlanned(p.id, { done: true }), haptic.ok(), refresh())} style={{ width: 24, height: 24, borderRadius: 12 }} />
-                <div className="grow" role="button" onClick={() => setEdit(p)}>
-                  <div>{p.title}</div>
-                  {(p.amount || p.dueDate) && (
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      {p.amount ? money(p.amount) : ''}
-                      {p.amount && p.dueDate ? ' · ' : ''}
-                      {p.dueDate ? new Date(`${p.dueDate}T12:00:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : ''}
-                    </div>
-                  )}
-                </div>
-                <button className="chip" aria-label="Удалить" onClick={async () => (await api.deletePlanned(p.id), refresh())}>✕</button>
-              </div>
+              <PlannedRow
+                key={p.id}
+                p={p}
+                onClick={() => setEdit(p)}
+                action={
+                  <button
+                    className="check"
+                    aria-label="Выполнено, убрать из списка"
+                    onClick={async () => (await api.updatePlanned(p.id, { done: true }), haptic.ok(), toast('Отмечено'), refresh())}
+                  />
+                }
+              />
             ))}
           </div>
-          {total > 0 && <div className="muted" style={{ margin: '8px 4px' }}>Всего запланировано: {money(total)}</div>}
+          {total > 0 && <div className="muted" style={{ margin: '8px 4px', fontSize: 14 }}>Всего запланировано {money(total)}</div>}
         </>
       )}
       <div className="section-title">Добавить</div>
-      <input className="input" placeholder="Например, ремонт машины" value={title} onChange={(e) => setTitle(e.target.value)} />
+      <Segments value={type} onChange={setType} options={[{ id: 'expense', label: 'Трата' }, { id: 'income', label: 'Поступление' }] as const} />
+      <input className="input" style={{ marginTop: 8 }} placeholder={type === 'expense' ? 'Например, ремонт машины' : 'Например, премия'} value={title} onChange={(e) => setTitle(e.target.value)} />
       <div className="row" style={{ marginTop: 8 }}>
         <input className="input" inputMode="decimal" placeholder="Сумма" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.,\s]/g, ''))} />
-        <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Дата" />
+        <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Дата (можно не указывать)" />
       </div>
+      <div className="muted" style={{ fontSize: 13, margin: '6px 4px 0' }}>Дату можно не указывать.</div>
       <button className="btn" disabled={!title.trim()} onClick={add}>Добавить</button>
       <PlannedSheet item={edit} onClose={() => setEdit(null)} />
     </>
@@ -220,9 +228,11 @@ function PlannedSheet({ item, onClose }: { item: PlannedItem | null; onClose: ()
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState('');
+  const [type, setType] = useState<TxType>('expense');
   const [last, setLast] = useState<PlannedItem | null>(null);
   if (item !== last) {
     setLast(item);
+    setType(item?.type ?? 'expense');
     setTitle(item?.title ?? '');
     setAmount(item?.amount ? String(item.amount) : '');
     setDate(item?.dueDate ?? '');
@@ -230,13 +240,13 @@ function PlannedSheet({ item, onClose }: { item: PlannedItem | null; onClose: ()
   const a = Number(amount.replace(/\s/g, '').replace(',', '.'));
   const done = (msg: string) => (haptic.ok(), toast(msg), refresh(), onClose());
   const save = async () => {
-    await api.updatePlanned(item!.id, { title: title.trim(), amount: a > 0 ? a : null, dueDate: date || null });
+    await api.updatePlanned(item!.id, { title: title.trim(), amount: a > 0 ? a : null, dueDate: date || null, type });
     done('Сохранено');
   };
   const record = async () => {
-    await api.addTx({ type: 'expense', amount: a, title: title.trim(), categoryId: null });
+    await api.addTx({ type, amount: a, title: title.trim(), categoryId: null });
     await api.updatePlanned(item!.id, { done: true });
-    done('Записано в расходы');
+    done(type === 'expense' ? 'Записано в расходы' : 'Записано в доходы');
   };
   const remove = async () => {
     await api.deletePlanned(item!.id);
@@ -244,14 +254,15 @@ function PlannedSheet({ item, onClose }: { item: PlannedItem | null; onClose: ()
   };
   return (
     <Sheet open={!!item} onClose={onClose}>
-      <div className="title">План</div>
-      <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
+      <div className="title">Будущая запись</div>
+      <Segments value={type} onChange={setType} options={[{ id: 'expense', label: 'Трата' }, { id: 'income', label: 'Поступление' }] as const} />
+      <input className="input" style={{ marginTop: 8 }} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
       <div className="row" style={{ marginTop: 8 }}>
         <input className="input" inputMode="decimal" placeholder="Сумма" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.,\s]/g, ''))} />
         <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Дата" />
       </div>
       <button className="btn" disabled={!title.trim()} onClick={save}>Сохранить</button>
-      {a > 0 && <button className="btn ghost" disabled={!title.trim()} onClick={record}>Потратил — записать в расходы</button>}
+      {a > 0 && <button className="btn ghost" disabled={!title.trim()} onClick={record}>{type === 'expense' ? 'Потратил — записать в расходы' : 'Получил — записать в доходы'}</button>}
       <button className="btn danger" onClick={remove}>Удалить</button>
     </Sheet>
   );

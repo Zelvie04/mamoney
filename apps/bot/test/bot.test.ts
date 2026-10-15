@@ -72,7 +72,7 @@ describe('бот', () => {
     await t.text('/future');
     await t.text('ремонт машины');
     await t.text('/show_future');
-    expect(t.last()).toBe('Планы:\n• ремонт машины');
+    expect(t.last()).toBe('Будущие траты:\n• ремонт машины');
   });
 
   it('категории: добавить и убрать', async () => {
@@ -141,5 +141,28 @@ describe('валюта в боте', () => {
     await t.press('cur:0');
     await t.text('100 чай');
     expect(plain(t.last())).toContain('Расход: 100 чай');
+  });
+});
+
+describe('будущие траты и статистика в боте', () => {
+  it('трата с будущей датой уходит в планы, баланс не меняется', async () => {
+    const t = await testBot();
+    const d = new Date(Date.now() + 5 * 86400_000).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit' });
+    await t.text(`${d} 5000 ремонт`);
+    expect(t.last()).toContain('В будущие траты: ремонт');
+    await t.text('/balance');
+    expect(plain(t.last())).toContain('0,00 ₽');
+    await t.text('/show_future');
+    expect(plain(t.last())).toContain('ремонт — 5 000,00 ₽');
+  });
+
+  it('/stats только владельцу', async () => {
+    const other = await testBot();
+    await other.text('/stats');
+    expect(other.last()).toContain('Не знаю такой команды');
+    const t = await testBot({ admin: { ids: [42], usernames: [] } });
+    await t.text('100 кофе');
+    await t.text('/stats');
+    expect(plain(t.last())).toMatch(/Пользователи: 1.*Операции: 1/s);
   });
 });

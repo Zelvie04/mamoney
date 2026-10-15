@@ -60,3 +60,13 @@ export function resolveOccurredAt(
   const midnight = zonedMidnight(n.getUTCFullYear(), n.getUTCMonth() + 1, n.getUTCDate(), tz);
   return new Date(midnight.getTime() + 12 * 3600_000);
 }
+
+/** Дата в часовом поясе пользователя в виде YYYY-MM-DD */
+export function localDate(d: Date, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+/** Операция с такой датой ещё не наступила (позже сегодняшнего дня по часовому поясу пользователя) */
+export function isFutureDay(d: Date, tz: string, now = new Date()): boolean {
+  return localDate(d, tz) > localDate(now, tz);
+}

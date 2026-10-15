@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { parseMessage, periodRange, resolveOccurredAt } from '@mamoney/core';
+import { isFutureDay, localDate, parseMessage, periodRange, resolveOccurredAt } from '@mamoney/core';
 import { users, type Db } from '@mamoney/db';
 import { eq, sql } from 'drizzle-orm';
 import {
@@ -11,6 +11,8 @@ import {
   addCategory,
   addPlanned,
   addTransaction,
+  adminStats,
+  isAdmin,
   budgetProgress,
   categoryTotals,
   dailySeries,
@@ -50,6 +52,8 @@ export interface ApiOptions {
   logger?: boolean;
   /** Отправка файла пользователю в чат с ботом (выгрузка CSV из Mini App) */
   sendDocument?: (chatId: number, file: Buffer, filename: string) => Promise<void>;
+  /** Кому доступна общая статистика */
+  admin?: { ids: number[]; usernames: string[] };
 }
 
 declare module 'fastify' {
@@ -112,6 +116,7 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       const u = req.user;
       return {
         user: { id: u.id, tgId: u.tgId, firstName: u.firstName, username: u.username, currency: u.currency, timezone: u.timezone, settings: u.settings },
+        isAdmin: !!opts.admin && isAdmin(u, opts.admin),
         balance: await getBalance(db, u.id),
       };
     });
@@ -166,6 +171,11 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       return monthlySeries(db, req.user.id, months, req.user.timezone);
     });
 
+    api.get('/admin/stats', async (req, reply) => {
+      if (!opts.admin || !isAdmin(req.user, opts.admin)) return reply.code(403).send({ error: 'forbidden' });
+      return adminStats(db);
+    });
+
     api.put('/balance', async (req) => {
       const { balance } = z.object({ balance: z.coerce.number().min(-1e11).max(1e11) }).parse(req.body);
       await setBalance(db, req.user.id, await defaultAccountId(db, req.user.id), balance);
@@ -208,6 +218,11 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
     api.post('/transactions', async (req, reply) => {
       const b = txBody.parse(req.body);
       const u = req.user;
+      // Дата ещё не наступила — это будущая трата, а не операция: в баланс она не попадает
+      if (b.occurredAt && isFutureDay(b.occurredAt, u.timezone)) {
+        const p = await addPlanned(db, u.id, b.title, { amount: b.amount, dueDate: localDate(b.occurredAt, u.timezone), type: b.type });
+        return reply.code(201).send({ planned: p });
+      }
       const cats = await listCategories(db, u.id, b.type);
       if (b.categoryId && !cats.some((c) => c.id === b.categoryId)) return reply.code(400).send({ error: 'bad_category' });
       const categoryId = b.categoryId ?? (await resolveCategory(db, u.id, { type: b.type, title: b.title, text: b.title, hint: null }, opts.ai)).category.id;
@@ -225,16 +240,22 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       const u = req.user;
       const accountId = await defaultAccountId(db, u.id);
       const created = [];
+      const planned = [];
       const errors = [];
       for (const [i, r] of parseMessage(text).entries()) {
         if (!r.ok) { errors.push({ line: i + 1, error: r.error }); continue; }
+        const occurredAt = resolveOccurredAt(r.tx.date, r.tx.dayOffset, u.timezone);
+        if (isFutureDay(occurredAt, u.timezone)) {
+          planned.push(await addPlanned(db, u.id, r.tx.title, { amount: r.tx.amount, dueDate: localDate(occurredAt, u.timezone), type: r.tx.type }));
+          continue;
+        }
         const { category } = await resolveCategory(db, u.id, { type: r.tx.type, title: r.tx.title, text, hint: r.tx.categoryHint }, opts.ai);
         created.push(await addTransaction(db, {
           userId: u.id, accountId, categoryId: category.id, type: r.tx.type, amount: r.tx.amount, currency: u.currency,
-          title: r.tx.title, occurredAt: resolveOccurredAt(r.tx.date, r.tx.dayOffset, u.timezone), source: 'app', rawText: text,
+          title: r.tx.title, occurredAt, source: 'app', rawText: text,
         }));
       }
-      return reply.code(created.length ? 201 : 400).send({ created, errors });
+      return reply.code(created.length || planned.length ? 201 : 400).send({ created, planned, errors });
     });
 
     api.patch('/transactions/:id', async (req, reply) => {
@@ -293,6 +314,7 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       amount: money.nullable().optional(),
       dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
       done: z.boolean().optional(),
+      type: z.enum(['income', 'expense']).optional(),
     });
     api.get('/planned', async (req) => listPlanned(db, req.user.id));
     api.post('/planned', async (req, reply) => {

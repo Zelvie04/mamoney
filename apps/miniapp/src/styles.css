@@ -173,3 +173,7 @@ textarea.input { resize: none; min-height: 72px; }
 .currency.wide { display: flex; width: 100%; gap: 8px; align-items: baseline; margin-top: 8px; }
 .balance-btn { all: unset; cursor: pointer; display: block; width: 100%; }
 .balance-btn .edit { font-size: 14px; font-weight: 500; color: var(--link); margin-top: 4px; }
+.hint-box { margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--card); color: var(--muted); font-size: 14px; }
+.overdue { color: var(--crit); }
+.check { width: 24px; height: 24px; border-radius: 12px; border: 2px solid var(--faint); background: none; flex: none; padding: 0; }
+.check:active { background: var(--accent); border-color: var(--accent); }

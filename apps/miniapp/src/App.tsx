@@ -25,6 +25,14 @@ const LABELS: Record<Tab, string> = { home: 'Главная', tx: 'Операц�
 
 export function App() {
   const [tab, setTab] = useState<Tab>('home');
+  const [morePage, setMorePage] = useState<'menu' | 'planned'>('menu');
+  const go = (t: Tab | 'planned') => {
+    if (t === 'planned') {
+      setMorePage('planned');
+      setTab('more');
+    } else setTab(t);
+    window.scrollTo(0, 0);
+  };
   const [me, setMe] = useState<Me | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [version, setVersion] = useState(0);
@@ -66,18 +74,18 @@ export function App() {
   return (
     <Ctx.Provider value={ctx}>
       <main className="app">
-        {tab === 'home' && <Home go={setTab} />}
+        {tab === 'home' && <Home go={go} />}
         {tab === 'tx' && <Transactions />}
         {tab === 'analytics' && <Analytics />}
         {tab === 'budgets' && <Budgets />}
-        {tab === 'more' && <More />}
+        {tab === 'more' && <More key={morePage} initial={morePage} />}
       </main>
       {tab !== 'more' && (
         <button className="fab" aria-label="Добавить операцию" onClick={() => (haptic.tap(), ctx.openAdd())}>+</button>
       )}
       <nav className="tabbar">
         {(Object.keys(LABELS) as Tab[]).map((t) => (
-          <button key={t} className={tab === t ? 'on' : ''} onClick={() => (haptic.tap(), setTab(t), window.scrollTo(0, 0))} aria-current={tab === t}>
+          <button key={t} className={tab === t ? 'on' : ''} onClick={() => (haptic.tap(), setMorePage('menu'), go(t))} aria-current={tab === t}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               {ICONS[t]}
             </svg>

@@ -22,6 +22,8 @@ export const users = pgTable('users', {
   timezone: text('timezone').notNull().default('Europe/Moscow'),
   /** Рассылка не дошла (бот заблокирован). Данные НЕ удаляются. */
   blockedAt: timestamp('blocked_at', { withTimezone: true }),
+  /** Последнее обращение к боту или приложению (для общей статистики) */
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   settings: jsonb('settings').$type<UserSettings>().notNull().default({}),
   createdAt: created(),
 });
@@ -117,6 +119,7 @@ export const recurring = pgTable('recurring', {
 export const planned = pgTable('planned', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   userId: bigint('user_id', { mode: 'number' }).notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: categoryType('type').notNull().default('expense'),
   title: text('title').notNull(),
   amount: money('amount'),
   dueDate: date('due_date'),
@@ -150,3 +153,14 @@ export const botState = pgTable('bot_state', {
   payload: jsonb('payload').notNull().default({}),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const reportStatus = pgEnum('report_status', ['sent', 'blocked', 'failed']);
+
+/** Журнал рассылки отчётов: только факт и итог, без текста */
+export const reportLog = pgTable('report_log', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  userId: bigint('user_id', { mode: 'number' }).references(() => users.id, { onDelete: 'set null' }),
+  kind: budgetPeriod('kind').notNull(),
+  status: reportStatus('status').notNull(),
+  createdAt: created(),
+}, (t) => [index('report_log_created_idx').on(t.createdAt)]);

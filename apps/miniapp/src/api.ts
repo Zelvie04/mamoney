@@ -15,9 +15,18 @@ export interface Summary {
 export interface Me {
   user: { id: number; firstName: string | null; username: string | null; currency: string; timezone: string; settings: Settings };
   balance: number;
+  isAdmin?: boolean;
 }
 export interface Settings { weeklyReport?: boolean; monthlyReport?: boolean; reportHour?: number; cleanChat?: boolean; currencyChosen?: boolean }
-export interface Planned { id: number; title: string; amount: number | null; dueDate: string | null; done: boolean }
+export interface Planned { id: number; type: TxType; title: string; amount: number | null; dueDate: string | null; done: boolean }
+export interface AdminStats {
+  users: { total: number; new1d: number; new7d: number; new30d: number; seen1d: number; seen7d: number; seen30d: number; blocked: number; withTransactions: number; currencyChosen: number };
+  transactions: { total: number; d1: number; d7: number; d30: number; writers7d: number; bySource: { bot: number; app: number; legacy: number } };
+  reports: { last30d: { sent: number; blocked: number; failed: number }; lastRun: { at: string; sent: number; notSent: number } | null };
+  planned: number;
+  budgetUsers: number;
+  daily: { day: string; newUsers: number; activeUsers: number; tx: number }[];
+}
 export type Period = 'week' | 'month' | 'prev_week' | 'prev_month' | 'all';
 
 const initData = tg?.initData || import.meta.env.VITE_DEV_INIT_DATA || '';
@@ -50,8 +59,9 @@ export const api = {
   transactions: (f: { period?: Period; type?: TxType; categoryId?: number; q?: string; cursor?: string | null; limit?: number }) =>
     req<{ items: Tx[]; nextCursor: string | null }>('GET', `/transactions${qs(f)}`),
   addTx: (t: { type: TxType; amount: number; title: string; categoryId?: number | null; occurredAt?: string; note?: string | null }) =>
-    req<Tx>('POST', '/transactions', t),
-  quick: (text: string) => req<{ created: Tx[]; errors: { line: number; error: string }[] }>('POST', '/transactions/quick', { text }),
+    req<Tx | { planned: Planned }>('POST', '/transactions', t),
+  quick: (text: string) => req<{ created: Tx[]; planned: Planned[]; errors: { line: number; error: string }[] }>('POST', '/transactions/quick', { text }),
+  adminStats: () => req<AdminStats>('GET', '/admin/stats'),
   updateTx: (id: number, t: Partial<{ type: TxType; amount: number; title: string; categoryId: number | null; occurredAt: string; note: string | null }>) =>
     req<Tx>('PATCH', `/transactions/${id}`, t),
   deleteTx: (id: number) => req<void>('DELETE', `/transactions/${id}`),
@@ -63,7 +73,7 @@ export const api = {
     b.id ? req<Budget>('PATCH', `/budgets/${b.id}`, b) : req<Budget>('POST', '/budgets', b),
   deleteBudget: (id: number) => req<void>('DELETE', `/budgets/${id}`),
   planned: () => req<Planned[]>('GET', '/planned'),
-  addPlanned: (p: { title: string; amount?: number | null; dueDate?: string | null }) => req<Planned>('POST', '/planned', p),
+  addPlanned: (p: { title: string; amount?: number | null; dueDate?: string | null; type?: TxType }) => req<Planned>('POST', '/planned', p),
   updatePlanned: (id: number, p: Partial<Planned>) => req<Planned>('PATCH', `/planned/${id}`, p),
   deletePlanned: (id: number) => req<void>('DELETE', `/planned/${id}`),
 };

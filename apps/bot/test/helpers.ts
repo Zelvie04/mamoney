@@ -19,7 +19,7 @@ export async function testDb(): Promise<Db> {
 export interface Call { method: string; payload: any }
 
 /** Бот с перехватом всех запросов к Telegram API. */
-export async function testBot(opts: { ai?: AiCategorizer; db?: Db } = {}) {
+export async function testBot(opts: { ai?: AiCategorizer; db?: Db; admin?: { ids: number[]; usernames: string[] } } = {}) {
   const db = opts.db ?? (await testDb());
   const calls: Call[] = [];
   let msgId = 1000;
@@ -27,6 +27,7 @@ export async function testBot(opts: { ai?: AiCategorizer; db?: Db } = {}) {
     db,
     token: 'test',
     ai: opts.ai,
+    admin: opts.admin,
     publicUrl: 'https://mamoney.example',
     defaults: { timezone: 'Europe/Moscow', currency: 'RUB' },
     botInfo: {

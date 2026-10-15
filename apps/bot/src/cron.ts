@@ -1,7 +1,7 @@
 import { GrammyError, type Api } from 'grammy';
 import { eq, isNull, sql } from 'drizzle-orm';
-import { buildReport, formatReport, periodRange } from '@mamoney/core';
-import { users, type Db } from '@mamoney/db';
+import { buildReport, formatMoney, formatReport, periodRange } from '@mamoney/core';
+import { reportLog, users, type Db } from '@mamoney/db';
 import { listPlanned } from '@mamoney/domain';
 import { reportRows } from '@mamoney/domain';
 import { markBlocked } from '@mamoney/domain';
@@ -43,10 +43,16 @@ export async function runScheduledReports(db: Db, api: Api, now = new Date(), lo
         currency: u.currency,
       });
       const planned = await listPlanned(db, u.id);
-      if (planned.length) text += `\n\n<b>Планы</b>\n${planned.map((p) => `• ${p.title}`).join('\n')}`;
+      if (planned.length) {
+        const line = (p: (typeof planned)[number]) =>
+          `• ${p.title}${p.amount ? ` — ${formatMoney(p.amount, u.currency)}` : ''}${p.dueDate ? ` (${p.dueDate.split('-').reverse().slice(0, 2).join('.')})` : ''}`;
+        text += `\n\n<b>Будущие траты</b>\n${planned.map(line).join('\n')}`;
+      }
+      const kind = job === 'prev_week' ? 'week' : 'month';
       try {
         await api.sendMessage(u.tgId, text, { parse_mode: 'HTML' });
         res.sent++;
+        await db.insert(reportLog).values({ userId: u.id, kind, status: 'sent' });
         const key = job === 'prev_week' ? 'lastWeekly' : 'lastMonthly';
         await db
           .update(users)
@@ -55,10 +61,12 @@ export async function runScheduledReports(db: Db, api: Api, now = new Date(), lo
       } catch (e) {
         if (e instanceof GrammyError && (e.error_code === 403 || /chat not found/i.test(e.description))) {
           await markBlocked(db, u.tgId);
+          await db.insert(reportLog).values({ userId: u.id, kind, status: 'blocked' });
           res.blocked++;
           break;
         }
         res.failed++;
+        await db.insert(reportLog).values({ userId: u.id, kind, status: 'failed' });
         log(`Отчёт ${job} для ${u.tgId} не отправлен: ${(e as Error).message}`);
       }
       await new Promise((r) => setTimeout(r, 50)); // не упираться в лимиты Telegram

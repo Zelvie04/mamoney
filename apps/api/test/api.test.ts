@@ -5,12 +5,13 @@ import { testDb } from '../../bot/test/helpers.ts';
 const TOKEN = '123:abc';
 const user = { id: 77, first_name: 'Аня', username: 'anya' };
 
-async function setup() {
+async function setup(extra: { admin?: { ids: number[]; usernames: string[] } } = {}) {
   const db = await testDb();
   const sentDocs: { chatId: number; file: Buffer; filename: string }[] = [];
   const app = await buildApi({
     db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' },
     sendDocument: async (chatId, file, filename) => void sentDocs.push({ chatId, file, filename }),
+    ...extra,
   });
   const auth = { authorization: `tma ${signInitData(user, TOKEN)}` };
   const call = async (method: string, url: string, body?: unknown) => {
@@ -144,5 +145,41 @@ describe('API', () => {
     expect((await call('DELETE', '/api/transactions?confirm=all')).status).toBe(204);
     expect((await call('GET', '/api/transactions?period=all')).body.items).toHaveLength(0);
     expect((await call('GET', '/api/me')).body.balance).toBe(0);
+  });
+
+  it('дата в будущем — в будущие траты, а не в баланс', async () => {
+    const { call } = await setup();
+    const future = new Date(Date.now() + 10 * 86400_000);
+    const r = await call('POST', '/api/transactions', { type: 'expense', amount: 5000, title: 'ремонт', occurredAt: future.toISOString() });
+    expect(r.status).toBe(201);
+    expect(r.body.planned).toMatchObject({ title: 'ремонт', amount: 5000, type: 'expense' });
+    expect((await call('GET', '/api/me')).body.balance).toBe(0);
+
+    const d = future.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit' });
+    const q = await call('POST', '/api/transactions/quick', { text: `${d} 700 подарок\n100 кофе` });
+    expect(q.body.planned).toHaveLength(1);
+    expect(q.body.created).toHaveLength(1);
+
+    const list = (await call('GET', '/api/planned')).body as any[];
+    expect(list.map((p) => p.title)).toEqual(['ремонт', 'подарок']);
+    const noDate = await call('POST', '/api/planned', { title: 'отпуск' });
+    expect(noDate.body.dueDate).toBeNull();
+    expect(((await call('GET', '/api/planned')).body as any[]).at(-1).title).toBe('отпуск');
+  });
+
+  it('статистика только владельцу и без личных данных', async () => {
+    const plain = await setup();
+    expect((await plain.call('GET', '/api/admin/stats')).status).toBe(403);
+    expect((await plain.call('GET', '/api/me')).body.isAdmin).toBe(false);
+
+    const { call } = await setup({ admin: { ids: [], usernames: ['anya'] } });
+    await call('POST', '/api/transactions', { type: 'expense', amount: 100, title: 'кофе' });
+    expect((await call('GET', '/api/me')).body.isAdmin).toBe(true);
+    const st = await call('GET', '/api/admin/stats');
+    expect(st.status).toBe(200);
+    expect(st.body.users).toMatchObject({ total: 1, new1d: 1, seen1d: 1, withTransactions: 1 });
+    expect(st.body.transactions).toMatchObject({ total: 1, d1: 1, bySource: { app: 1 } });
+    expect(st.body.daily).toHaveLength(30);
+    expect(JSON.stringify(st.body)).not.toMatch(/anya|кофе|77/);
   });
 });

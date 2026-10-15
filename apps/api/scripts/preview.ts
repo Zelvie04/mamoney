@@ -31,9 +31,11 @@ await setBalance(db, user.id, acc, 48350);
 await upsertBudget(db, user.id, { categoryId: cat('кафе'), period: 'month', amount: 4000 });
 await upsertBudget(db, user.id, { categoryId: null, period: 'month', amount: 60000 });
 await upsertBudget(db, user.id, { categoryId: cat('развлечения'), period: 'week', amount: 1500 });
-await addPlanned(db, user.id, 'ремонт машины', { amount: 25000, dueDate: '2026-11-20' });
+await addPlanned(db, user.id, 'ремонт машины', { amount: 25000, dueDate: new Date(Date.now() + 36 * 86400_000).toLocaleDateString('en-CA') });
+await addPlanned(db, user.id, 'страховка', { amount: 4200, dueDate: new Date(Date.now() + 3 * 86400_000).toLocaleDateString('en-CA') });
+await addPlanned(db, user.id, 'премия', { amount: 15000, type: 'income', dueDate: new Date(Date.now() + 12 * 86400_000).toLocaleDateString('en-CA') });
 await addPlanned(db, user.id, 'подарок маме');
 
-const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' }, sendDocument: async () => {}, staticDir: fileURLToPath(new URL('../../miniapp/dist', import.meta.url)) });
+const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' }, sendDocument: async () => {}, admin: { ids: [1], usernames: [] }, staticDir: fileURLToPath(new URL('../../miniapp/dist', import.meta.url)) });
 await app.listen({ port: 3999 });
 console.log('INIT_DATA=' + signInitData({ id: 1, first_name: 'Зелв' }, TOKEN));

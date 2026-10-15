@@ -7,14 +7,18 @@ export type User = typeof users.$inferSelect;
 
 export interface UserDefaults { timezone: string; currency: string }
 
+/** Как часто обновлять «был в сети»: чаще не нужно для статистики, а лишние записи в базу ни к чему */
+const SEEN_THROTTLE_MS = 10 * 60_000;
+
 /** Находит пользователя или регистрирует: счёт «Основной» и стандартные категории. */
 export async function ensureUser(db: Db, tg: TgUser, defaults: UserDefaults): Promise<{ user: User; created: boolean }> {
   const [existing] = await db.select().from(users).where(eq(users.tgId, tg.id));
   if (existing) {
-    if (existing.blockedAt || existing.username !== (tg.username ?? null) || existing.firstName !== (tg.first_name ?? null)) {
+    const stale = !existing.lastSeenAt || Date.now() - existing.lastSeenAt.getTime() > SEEN_THROTTLE_MS;
+    if (stale || existing.blockedAt || existing.username !== (tg.username ?? null) || existing.firstName !== (tg.first_name ?? null)) {
       const [u] = await db
         .update(users)
-        .set({ blockedAt: null, username: tg.username ?? null, firstName: tg.first_name ?? null, lastName: tg.last_name ?? null })
+        .set({ blockedAt: null, lastSeenAt: new Date(), username: tg.username ?? null, firstName: tg.first_name ?? null, lastName: tg.last_name ?? null })
         .where(eq(users.id, existing.id))
         .returning();
       return { user: u!, created: false };
@@ -32,6 +36,7 @@ export async function ensureUser(db: Db, tg: TgUser, defaults: UserDefaults): Pr
         lastName: tg.last_name ?? null,
         timezone: defaults.timezone,
         currency: defaults.currency,
+        lastSeenAt: new Date(),
         settings: { weeklyReport: true, monthlyReport: true, cleanChat: true },
       })
       .onConflictDoNothing({ target: users.tgId })

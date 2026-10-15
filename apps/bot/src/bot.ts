@@ -10,6 +10,8 @@ import {
   formatReport,
   parseMessage,
   periodRange,
+  isFutureDay,
+  localDate,
   resolveOccurredAt,
 } from '@mamoney/core';
 import type { Db } from '@mamoney/db';
@@ -34,6 +36,7 @@ import {
   totals,
   updateTransaction,
 } from '@mamoney/domain';
+import { adminStats, formatStats, isAdmin } from '@mamoney/domain';
 import { type User, defaultAccountId, ensureUser, exportCsv, getState, markBlocked, setCurrency, setState } from '@mamoney/domain';
 import { BOT_COMMANDS, COMMANDS, HELP, esc } from './texts.ts';
 
@@ -43,6 +46,8 @@ export interface BotDeps {
   ai?: AiCategorizer;
   publicUrl?: string;
   defaults: { timezone: string; currency: string };
+  /** Кому доступна /stats */
+  admin?: { ids: number[]; usernames: string[] };
   /** Для тестов: готовые данные бота, чтобы не ходить в getMe */
   botInfo?: UserFromGetMe;
 }
@@ -118,6 +123,12 @@ export function createBot(deps: BotDeps) {
     await tidy(ctx);
   });
 
+  // Общая статистика — только владельцу; остальным команда как будто не существует
+  bot.command('stats', async (ctx) => {
+    if (!deps.admin || !isAdmin(ctx.user, deps.admin)) return ctx.reply('Не знаю такой команды. Список: /commands');
+    await ctx.reply(formatStats(await adminStats(db)), { parse_mode: 'HTML' });
+  });
+
   bot.command(['commands', 'help'], (ctx) => ctx.reply(COMMANDS));
   bot.command('creator', (ctx) => ctx.reply('Создатель: @Zelv04\nЕсть идеи или вопросы — пиши!'));
   bot.command('app', async (ctx) => {
@@ -187,7 +198,9 @@ export function createBot(deps: BotDeps) {
 
   bot.command('show_future', async (ctx) => {
     const list = await listPlanned(db, ctx.user.id);
-    await ctx.reply(list.length ? `Планы:\n${list.map((p) => `• ${p.title}`).join('\n')}` : 'Планов пока нет. Добавить — /future');
+    const line = (p: (typeof list)[number]) =>
+      `• ${p.title}${p.amount ? ` — ${money(ctx.user, p.amount)}` : ''}${p.dueDate ? ` (${p.dueDate.split('-').reverse().slice(0, 2).join('.')})` : ''}`;
+    await ctx.reply(list.length ? `Будущие траты:\n${list.map(line).join('\n')}` : 'Планов пока нет. Добавить — /future или запиши трату с будущей датой: «20.11 5000 ремонт»');
     await tidy(ctx);
   });
 
@@ -334,6 +347,15 @@ export function createBot(deps: BotDeps) {
         await ctx.reply(`Пропустил строку «${lines[i]}»: не нашёл ${r.error === 'no_amount' ? 'сумму' : 'название'}.`);
         continue;
       }
+      const occurredAt = resolveOccurredAt(r.tx.date, r.tx.dayOffset, ctx.user.timezone);
+      if (isFutureDay(occurredAt, ctx.user.timezone)) {
+        const due = localDate(occurredAt, ctx.user.timezone);
+        await addPlanned(db, ctx.user.id, r.tx.title, { amount: r.tx.amount, dueDate: due, type: r.tx.type });
+        await ctx.reply(
+          `🗓 В будущие траты: ${r.tx.title}, ${money(ctx.user, r.tx.amount)} на ${due.split('-').reverse().join('.')}\nВ баланс не идёт, пока не запишешь как операцию. Все планы — /show_future`,
+        );
+        continue;
+      }
       const { category } = await resolveCategory(
         db,
         ctx.user.id,
@@ -348,7 +370,7 @@ export function createBot(deps: BotDeps) {
         amount: r.tx.amount,
         currency: ctx.user.currency,
         title: r.tx.title,
-        occurredAt: resolveOccurredAt(r.tx.date, r.tx.dayOffset, ctx.user.timezone),
+        occurredAt,
         source: 'bot',
         rawText: lines[i] ?? text,
       });
