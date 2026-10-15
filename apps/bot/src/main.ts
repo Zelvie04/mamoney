@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
-import { InputFile, webhookCallback } from 'grammy';
+import { GrammyError, InputFile, webhookCallback } from 'grammy';
 import { buildApi } from '@mamoney/api';
-import { parseAdminConfig } from '@mamoney/domain';
+import { interruptRunningBroadcasts, parseAdminConfig, type SendText } from '@mamoney/domain';
 import { connect } from '@mamoney/db';
 import { llmCategorizer, resolveModels } from './ai.ts';
 import { createBot, setupBotProfile } from './bot.ts';
@@ -20,6 +20,23 @@ const base = config.publicUrl.replace(/\/$/, '');
 const appUrl = base ? `${base}/app/` : null;
 await setupBotProfile(bot, appUrl).catch((e) => console.error('setMyCommands', e));
 startScheduler(db, bot.api, config.adminChatId);
+await interruptRunningBroadcasts(db);
+
+/** Обычный текст без разметки; при лимите Telegram ждём и пробуем ещё раз */
+const sendText: SendText = async (chatId, text) => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await bot.api.sendMessage(chatId, text, { link_preview_options: { is_disabled: true } });
+      return 'sent';
+    } catch (e) {
+      if (!(e instanceof GrammyError)) return 'failed';
+      if (e.error_code === 403 || /chat not found|user is deactivated/i.test(e.description)) return 'blocked';
+      if (e.error_code !== 429) return 'failed';
+      await new Promise((r) => setTimeout(r, ((e.parameters.retry_after ?? 1) + 1) * 1000));
+    }
+  }
+  return 'failed';
+};
 
 // Один процесс: вебхук бота + API Mini App + статика Mini App
 const app = await buildApi({
@@ -30,6 +47,7 @@ const app = await buildApi({
   staticDir: process.env.MINIAPP_DIR ?? fileURLToPath(new URL('../../miniapp/dist', import.meta.url)),
   logger: true,
   admin: parseAdminConfig(process.env),
+  sendText,
   sendDocument: async (chatId, file, filename) => {
     await bot.api.sendDocument(chatId, new InputFile(file, filename));
   },

@@ -12,6 +12,12 @@ import {
   addPlanned,
   addTransaction,
   adminStats,
+  BROADCAST_MAX_LENGTH,
+  broadcastRecipients,
+  listBroadcasts,
+  runningBroadcast,
+  startBroadcast,
+  type SendText,
   isAdmin,
   budgetProgress,
   categoryTotals,
@@ -54,6 +60,10 @@ export interface ApiOptions {
   sendDocument?: (chatId: number, file: Buffer, filename: string) => Promise<void>;
   /** Кому доступна общая статистика */
   admin?: { ids: number[]; usernames: string[] };
+  /** Отправка текста в чат с ботом (рассылки владельца) */
+  sendText?: SendText;
+  /** Пауза между сообщениями рассылки */
+  broadcastDelayMs?: number;
 }
 
 declare module 'fastify' {
@@ -171,9 +181,37 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
       return monthlySeries(db, req.user.id, months, req.user.timezone);
     });
 
+    const notAdmin = (req: FastifyRequest) => !opts.admin || !isAdmin(req.user, opts.admin);
+
     api.get('/admin/stats', async (req, reply) => {
-      if (!opts.admin || !isAdmin(req.user, opts.admin)) return reply.code(403).send({ error: 'forbidden' });
+      if (notAdmin(req)) return reply.code(403).send({ error: 'forbidden' });
       return adminStats(db);
+    });
+
+    api.get('/admin/broadcasts', async (req, reply) => {
+      if (notAdmin(req)) return reply.code(403).send({ error: 'forbidden' });
+      return { recipients: await broadcastRecipients(db), items: await listBroadcasts(db) };
+    });
+
+    api.post('/admin/broadcast', async (req, reply) => {
+      if (notAdmin(req)) return reply.code(403).send({ error: 'forbidden' });
+      if (!opts.sendText) return reply.code(501).send({ error: 'not_available' });
+      const { text, test } = z
+        .object({ text: z.string().trim().min(1).max(BROADCAST_MAX_LENGTH), test: z.boolean().optional() })
+        .parse(req.body);
+      // Пробная отправка — только себе
+      if (test) return { status: await opts.sendText(req.user.tgId, text) };
+      if (await runningBroadcast(db)) return reply.code(409).send({ error: 'already_running' });
+      try {
+        const { broadcast } = await startBroadcast(db, opts.sendText, text, { delayMs: opts.broadcastDelayMs });
+        return reply.code(202).send(broadcast);
+      } catch (e) {
+        // одновременный второй запуск отсекает уникальный индекс
+        if (JSON.stringify(e).includes('23505') || /broadcasts_one_running/.test(String(e))) {
+          return reply.code(409).send({ error: 'already_running' });
+        }
+        throw e;
+      }
     });
 
     api.put('/balance', async (req) => {

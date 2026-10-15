@@ -15,6 +15,13 @@
       "when": 1792091550504,
       "tag": "0001_stats_planned",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792092725668,
+      "tag": "0002_broadcasts",
+      "breakpoints": true
     }
   ]
 }

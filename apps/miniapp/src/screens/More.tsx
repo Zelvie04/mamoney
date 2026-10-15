@@ -8,14 +8,16 @@ import { money } from '../format';
 import { useLoad } from '../hooks';
 import { PlannedRow, plannedTotal } from '../components/PlannedList';
 import { Stats } from './Stats';
+import { BroadcastPage } from './Broadcast';
 import { confirm, haptic } from '../tg';
 
-type Page = 'menu' | 'categories' | 'planned' | 'settings' | 'stats';
+type Page = 'menu' | 'categories' | 'planned' | 'settings' | 'stats' | 'broadcast';
 
 export function More({ initial = 'menu' }: { initial?: Page }) {
   const { me } = useApp();
   const [page, setPage] = useState<Page>(initial);
   if (page === 'stats') return <Stats back={() => setPage('menu')} />;
+  if (page === 'broadcast') return <BroadcastPage back={() => setPage('menu')} />;
   if (page === 'categories') return <Categories back={() => setPage('menu')} />;
   if (page === 'planned') return <Planned back={() => setPage('menu')} />;
   if (page === 'settings') return <Settings back={() => setPage('menu')} />;
@@ -27,6 +29,7 @@ export function More({ initial = 'menu' }: { initial?: Page }) {
         <MenuItem icon="🗓" title="Будущие траты" sub="Планы с датой и без" onClick={() => setPage('planned')} />
         <MenuItem icon="⚙️" title="Настройки" sub="Валюта, часовой пояс, отчёты" onClick={() => setPage('settings')} />
         {me?.isAdmin && <MenuItem icon="📊" title="Статистика" sub="Только для тебя: общие цифры по боту" onClick={() => setPage('stats')} />}
+        {me?.isAdmin && <MenuItem icon="📣" title="Рассылка" sub="Сообщение всем пользователям бота" onClick={() => setPage('broadcast')} />}
       </div>
       <Data />
       <p className="sub" style={{ fontSize: 13, margin: '14px 4px' }}>

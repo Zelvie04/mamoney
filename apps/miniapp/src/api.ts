@@ -19,6 +19,18 @@ export interface Me {
 }
 export interface Settings { weeklyReport?: boolean; monthlyReport?: boolean; reportHour?: number; cleanChat?: boolean; currencyChosen?: boolean }
 export interface Planned { id: number; type: TxType; title: string; amount: number | null; dueDate: string | null; done: boolean }
+export interface Broadcast {
+  id: number;
+  text: string;
+  status: 'running' | 'done' | 'interrupted';
+  total: number;
+  sent: number;
+  blocked: number;
+  failed: number;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
 export interface AdminStats {
   users: { total: number; new1d: number; new7d: number; new30d: number; seen1d: number; seen7d: number; seen30d: number; blocked: number; withTransactions: number; currencyChosen: number };
   transactions: { total: number; d1: number; d7: number; d30: number; writers7d: number; bySource: { bot: number; app: number; legacy: number } };
@@ -62,6 +74,8 @@ export const api = {
     req<Tx | { planned: Planned }>('POST', '/transactions', t),
   quick: (text: string) => req<{ created: Tx[]; planned: Planned[]; errors: { line: number; error: string }[] }>('POST', '/transactions/quick', { text }),
   adminStats: () => req<AdminStats>('GET', '/admin/stats'),
+  broadcasts: () => req<{ recipients: number; items: Broadcast[] }>('GET', '/admin/broadcasts'),
+  broadcast: (text: string, test = false) => req<Broadcast | { status: 'sent' | 'blocked' | 'failed' }>('POST', '/admin/broadcast', { text, test }),
   updateTx: (id: number, t: Partial<{ type: TxType; amount: number; title: string; categoryId: number | null; occurredAt: string; note: string | null }>) =>
     req<Tx>('PATCH', `/transactions/${id}`, t),
   deleteTx: (id: number) => req<void>('DELETE', `/transactions/${id}`),

@@ -36,6 +36,6 @@ await addPlanned(db, user.id, 'страховка', { amount: 4200, dueDate: new
 await addPlanned(db, user.id, 'премия', { amount: 15000, type: 'income', dueDate: new Date(Date.now() + 12 * 86400_000).toLocaleDateString('en-CA') });
 await addPlanned(db, user.id, 'подарок маме');
 
-const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' }, sendDocument: async () => {}, admin: { ids: [1], usernames: [] }, staticDir: fileURLToPath(new URL('../../miniapp/dist', import.meta.url)) });
+const app = await buildApi({ db, botToken: TOKEN, defaults: { timezone: 'Europe/Moscow', currency: 'RUB' }, sendDocument: async () => {}, sendText: async () => 'sent', broadcastDelayMs: 300, admin: { ids: [1], usernames: [] }, staticDir: fileURLToPath(new URL('../../miniapp/dist', import.meta.url)) });
 await app.listen({ port: 3999 });
 console.log('INIT_DATA=' + signInitData({ id: 1, first_name: 'Зелв' }, TOKEN));

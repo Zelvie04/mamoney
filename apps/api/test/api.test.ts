@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { buildApi, signInitData, verifyInitData } from '../src/index.ts';
+import { users } from '@mamoney/db';
 import { testDb } from '../../bot/test/helpers.ts';
 
 const TOKEN = '123:abc';
 const user = { id: 77, first_name: 'Аня', username: 'anya' };
 
-async function setup(extra: { admin?: { ids: number[]; usernames: string[] } } = {}) {
+async function setup(extra: Partial<Parameters<typeof buildApi>[0]> = {}) {
   const db = await testDb();
   const sentDocs: { chatId: number; file: Buffer; filename: string }[] = [];
   const app = await buildApi({
@@ -181,5 +182,40 @@ describe('API', () => {
     expect(st.body.transactions).toMatchObject({ total: 1, d1: 1, bySource: { app: 1 } });
     expect(st.body.daily).toHaveLength(30);
     expect(JSON.stringify(st.body)).not.toMatch(/anya|кофе|77/);
+  });
+  it('рассылка: только владельцу, пробная себе, всем кроме заблокировавших', async () => {
+    const plain = await setup();
+    expect((await plain.call('POST', '/api/admin/broadcast', { text: 'привет' })).status).toBe(403);
+
+    const got: { chatId: number; text: string }[] = [];
+    const { call, db } = await setup({
+      admin: { ids: [], usernames: ['anya'] },
+      broadcastDelayMs: 0,
+      sendText: async (chatId, text) => {
+        if (chatId === 2) return 'blocked';
+        got.push({ chatId, text });
+        return 'sent';
+      },
+    });
+    await call('GET', '/api/me');
+    await db.insert(users).values([{ tgId: 1 }, { tgId: 2 }, { tgId: 3, blockedAt: new Date() }]);
+    expect((await call('GET', '/api/admin/broadcasts')).body).toMatchObject({ recipients: 3, items: [] });
+
+    expect((await call('POST', '/api/admin/broadcast', { text: 'проба', test: true })).body).toEqual({ status: 'sent' });
+    expect(got).toEqual([{ chatId: 77, text: 'проба' }]);
+    expect((await call('POST', '/api/admin/broadcast', { text: '   ' })).status).toBe(400);
+
+    const started = await call('POST', '/api/admin/broadcast', { text: 'Новая версия!' });
+    expect(started.status).toBe(202);
+    expect(started.body).toMatchObject({ status: 'running', total: 3 });
+    let list: any;
+    for (let i = 0; i < 50; i++) {
+      list = (await call('GET', '/api/admin/broadcasts')).body;
+      if (list.items[0].status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(list.items[0]).toMatchObject({ status: 'done', total: 3, sent: 2, blocked: 1, failed: 0, text: 'Новая версия!' });
+    expect(got.slice(1).map((g) => g.chatId).sort()).toEqual([1, 77]);
+    expect(list.recipients).toBe(2); // заблокировавший помечен и больше не получит
   });
 });

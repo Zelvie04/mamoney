@@ -164,3 +164,19 @@ export const reportLog = pgTable('report_log', {
   status: reportStatus('status').notNull(),
   createdAt: created(),
 }, (t) => [index('report_log_created_idx').on(t.createdAt)]);
+
+export const broadcastStatus = pgEnum('broadcast_status', ['running', 'done', 'interrupted']);
+
+/** Рассылки от владельца: текст и итоговые счётчики, без списка получателей */
+export const broadcasts = pgTable('broadcasts', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  text: text('text').notNull(),
+  status: broadcastStatus('status').notNull().default('running'),
+  total: integer('total').notNull().default(0),
+  sent: integer('sent').notNull().default(0),
+  blocked: integer('blocked').notNull().default(0),
+  failed: integer('failed').notNull().default(0),
+  createdAt: created(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => [uniqueIndex('broadcasts_one_running').on(t.status).where(sql`${t.status} = 'running'`)]);
+export type Broadcast = typeof broadcasts.$inferSelect;
