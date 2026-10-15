@@ -76,6 +76,21 @@ export function Home({ go }: { go: (tab: 'tx' | 'budgets' | 'planned') => void }
         </>
       )}
 
+      <div className="section-title">Куда ушли деньги</div>
+      <div className="card">
+        <BarList items={expenses} total={d.expense} color="var(--expense)" limit={6} />
+      </div>
+
+      <div className="section-title row spread">
+        <span>Последние операции</span>
+        <button className="chip" onClick={() => go('tx')}>Все</button>
+      </div>
+      {recent.data?.items.length ? (
+        <div className="list">{recent.data.items.map((t) => <TxItem key={t.id} tx={t} showDate />)}</div>
+      ) : (
+        <div className="card empty">Пока пусто. Нажми «+» или напиши боту «350 кофе».</div>
+      )}
+
       <div className="section-title row spread">
         <span>Будущие траты</span>
         <button className="chip" onClick={() => go('planned')}>{planned.data?.length ? 'Все' : 'Добавить'}</button>
@@ -94,21 +109,6 @@ export function Home({ go }: { go: (tab: 'tx' | 'budgets' | 'planned') => void }
         </>
       ) : (
         <div className="card empty" style={{ padding: '18px 16px' }}>Здесь появятся траты с будущей датой. Выбери дату позже сегодняшней при добавлении.</div>
-      )}
-
-      <div className="section-title">Куда ушли деньги</div>
-      <div className="card">
-        <BarList items={expenses} total={d.expense} color="var(--expense)" limit={6} />
-      </div>
-
-      <div className="section-title row spread">
-        <span>Последние операции</span>
-        <button className="chip" onClick={() => go('tx')}>Все</button>
-      </div>
-      {recent.data?.items.length ? (
-        <div className="list">{recent.data.items.map((t) => <TxItem key={t.id} tx={t} />)}</div>
-      ) : (
-        <div className="card empty">Пока пусто. Нажми «+» или напиши боту «350 кофе».</div>
       )}
     </>
   );
